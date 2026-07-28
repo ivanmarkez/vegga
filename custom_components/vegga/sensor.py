@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
@@ -72,13 +72,18 @@ async def async_setup_entry(
         VeggaHistoryDiagnosticSensor(coordinator),
     ]
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
-        entities.append(
-            VeggaSectorConsumptionSensor(
-                coordinator,
-                _sector_number(sector, fallback),
-                _sector_name(sector, fallback),
-            )
-        )
+        number = _sector_number(sector, fallback)
+        name = _sector_name(sector, fallback)
+        entities.extend([
+            VeggaSectorConsumptionSensor(coordinator, number, name),
+            VeggaSectorBaselineConsumptionSensor(coordinator, number, name),
+            VeggaSectorConsumptionDeviationSensor(coordinator, number, name),
+            VeggaSectorLastIrrigationSensor(coordinator, number, name),
+            VeggaSectorLastDurationSensor(coordinator, number, name),
+            VeggaSectorExpectedFlowSensor(coordinator, number, name),
+            VeggaSectorActualFlowSensor(coordinator, number, name),
+            VeggaSectorFlowDeviationSensor(coordinator, number, name),
+        ])
     async_add_entities(entities)
 
 
@@ -207,6 +212,219 @@ class VeggaSectorConsumptionSensor(VeggaSectorEntity, SensorEntity):
             "vegga_flow_deviation_percent": analysis.vegga_flow_deviation_percent,
             "last_started_at": analysis.last_started_at,
             "last_ended_at": analysis.last_ended_at,
+        }
+
+
+
+
+class _VeggaSectorAnalysisSensor(VeggaSectorEntity, SensorEntity):
+    """Common base for one sector's historical analysis entities."""
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._number = number
+        self._sector_name = name
+
+    def _analysis(self):
+        return analyse_sector(
+            (self.coordinator.data or {}).get("history", []),
+            self._number,
+            self._sector_name,
+        )
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._analysis().level != "unknown"
+
+
+class VeggaSectorBaselineConsumptionSensor(_VeggaSectorAnalysisSensor):
+    """Median of the previous usable irrigations for this sector."""
+
+    _attr_name = "Consumo habitual"
+    _attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
+    _attr_device_class = SensorDeviceClass.VOLUME
+    _attr_icon = "mdi:chart-timeline-variant"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_baseline_consumption"
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._analysis().baseline_volume_m3
+        return round(value, 3) if value is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analysis = self._analysis()
+        return {
+            "method": "Mediana de riegos anteriores",
+            "sample_count": analysis.sample_count,
+            "sector_number": analysis.sector_number,
+        }
+
+
+class VeggaSectorConsumptionDeviationSensor(_VeggaSectorAnalysisSensor):
+    """Deviation of latest irrigation volume from the learned baseline."""
+
+    _attr_name = "Desviación de consumo"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:percent-outline"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_consumption_deviation"
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._analysis().deviation_percent
+        return round(value, 2) if value is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analysis = self._analysis()
+        return {
+            "level": analysis.level,
+            "last_volume_m3": analysis.last_volume_m3,
+            "baseline_volume_m3": analysis.baseline_volume_m3,
+            "interpretation": (
+                "Consumo superior al habitual"
+                if analysis.deviation_percent is not None and analysis.deviation_percent > 0
+                else "Consumo inferior al habitual"
+                if analysis.deviation_percent is not None and analysis.deviation_percent < 0
+                else "Consumo dentro de lo habitual"
+                if analysis.deviation_percent is not None
+                else "Aprendiendo el consumo habitual"
+            ),
+        }
+
+
+class VeggaSectorLastIrrigationSensor(_VeggaSectorAnalysisSensor):
+    """Timestamp of the most recent irrigation recorded by VEGGA."""
+
+    _attr_name = "Último riego"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_last_irrigation"
+
+    @property
+    def native_value(self) -> datetime | None:
+        analysis = self._analysis()
+        return analysis.last_ended_at or analysis.last_started_at
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analysis = self._analysis()
+        return {
+            "started_at": analysis.last_started_at,
+            "ended_at": analysis.last_ended_at,
+            "duration_minutes": analysis.last_duration_minutes,
+            "volume_m3": analysis.last_volume_m3,
+        }
+
+
+class VeggaSectorLastDurationSensor(_VeggaSectorAnalysisSensor):
+    """Duration of the latest irrigation."""
+
+    _attr_name = "Duración último riego"
+    _attr_native_unit_of_measurement = "min"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_last_duration"
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._analysis().last_duration_minutes
+        return round(value, 1) if value is not None else None
+
+
+class VeggaSectorExpectedFlowSensor(_VeggaSectorAnalysisSensor):
+    """Expected flow reported by VEGGA for the latest irrigation."""
+
+    _attr_name = "Caudal esperado"
+    _attr_native_unit_of_measurement = "m³/h"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:water-check-outline"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_expected_flow"
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._analysis().expected_flow_m3h
+        return round(value, 3) if value is not None else None
+
+
+class VeggaSectorActualFlowSensor(_VeggaSectorAnalysisSensor):
+    """Actual flow reported by VEGGA for the latest irrigation."""
+
+    _attr_name = "Caudal real"
+    _attr_native_unit_of_measurement = "m³/h"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:water-sync"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_actual_flow"
+
+    @property
+    def native_value(self) -> float | None:
+        analysis = self._analysis()
+        value = analysis.actual_flow_m3h
+        if value is None:
+            value = analysis.average_flow_m3h
+        return round(value, 3) if value is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analysis = self._analysis()
+        return {
+            "source": "VEGGA" if analysis.actual_flow_m3h is not None else "Calculado por volumen y duración",
+            "calculated_flow_m3h": analysis.average_flow_m3h,
+        }
+
+
+class VeggaSectorFlowDeviationSensor(_VeggaSectorAnalysisSensor):
+    """Flow deviation reported by VEGGA for the latest irrigation."""
+
+    _attr_name = "Desviación de caudal"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:swap-vertical-bold"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_flow_deviation"
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._analysis().vegga_flow_deviation_percent
+        return round(value, 2) if value is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analysis = self._analysis()
+        return {
+            "expected_flow_m3h": analysis.expected_flow_m3h,
+            "actual_flow_m3h": analysis.actual_flow_m3h,
+            "interpretation": (
+                "Caudal superior al esperado"
+                if analysis.vegga_flow_deviation_percent is not None and analysis.vegga_flow_deviation_percent > 0
+                else "Caudal inferior al esperado"
+                if analysis.vegga_flow_deviation_percent is not None and analysis.vegga_flow_deviation_percent < 0
+                else "Caudal según lo esperado"
+                if analysis.vegga_flow_deviation_percent is not None
+                else "Sin dato de desviación"
+            ),
         }
 
 
