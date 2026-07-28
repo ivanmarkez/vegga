@@ -73,6 +73,7 @@ async def async_setup_entry(
         VeggaLastCommandSensor(coordinator),
         VeggaLastUpdateSensor(coordinator),
         VeggaLastHistoryUpdateSensor(coordinator),
+        VeggaHistoryDiagnosticSensor(coordinator),
     ]
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
         entities.append(
@@ -287,3 +288,25 @@ class VeggaLastHistoryUpdateSensor(VeggaEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         return self.coordinator.last_history_update
+
+
+class VeggaHistoryDiagnosticSensor(VeggaEntity, SensorEntity):
+    """Expose the last history response shape for temporary diagnostics."""
+
+    _attr_name = "Diagnóstico histórico VEGGA"
+    _attr_icon = "mdi:bug-outline"
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.api.device_id}_history_diagnostic"
+
+    @property
+    def native_value(self) -> str:
+        debug = (self.coordinator.data or {}).get("history_debug", {})
+        count = debug.get("parsed_record_count")
+        return f"{count} registros interpretados" if count is not None else "Sin diagnóstico"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return (self.coordinator.data or {}).get("history_debug", {})

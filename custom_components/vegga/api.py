@@ -40,6 +40,7 @@ class VeggaApi:
         self._refresh_token: str | None = None
         self._expires_at: datetime | None = None
         self._auth_lock = asyncio.Lock()
+        self.history_debug: dict[str, Any] = {}
 
     @property
     def headers(self) -> dict[str, str]:
@@ -441,6 +442,32 @@ class VeggaApi:
             params["sector"] = sector
         url = f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/history/sectors"
         data = await self._request_url("GET", url, params=params)
+
+        # Keep a small, token-free diagnostic sample visible in Home Assistant.
+        # The HAR does not include the JSON response body, so this lets us see
+        # VEGGA's real field names without exposing credentials.
+        if isinstance(data, dict):
+            top_keys = list(data.keys())[:30]
+        else:
+            top_keys = [type(data).__name__]
+
+        def _sample(value: Any, depth: int = 0) -> Any:
+            if depth >= 4:
+                return f"<{type(value).__name__}>"
+            if isinstance(value, dict):
+                return {str(k): _sample(v, depth + 1) for k, v in list(value.items())[:20]}
+            if isinstance(value, list):
+                return [_sample(v, depth + 1) for v in value[:2]]
+            if isinstance(value, str):
+                return value[:200]
+            return value
+
+        self.history_debug = {
+            "sector_requested": sector,
+            "top_level_keys": top_keys,
+            "response_sample": _sample(data),
+        }
+
         records = self._extract_history_records(data)
 
         # The history service uses a pageable response. Its row field names can
@@ -462,6 +489,10 @@ class VeggaApi:
                     item["sector"] = sector
                 normalized.append(item)
             records = normalized
+
+        self.history_debug["parsed_record_count"] = len(records)
+        if records:
+            self.history_debug["first_record"] = _sample(records[0])
 
         if not records:
             shape = list(data.keys()) if isinstance(data, dict) else type(data).__name__
