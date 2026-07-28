@@ -65,6 +65,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         try:
             programs = await self.api.get_programs()
             sectors = await self.api.get_sectors()
+            unit_status = await self.api.get_unit_status()
             now = datetime.now(timezone.utc)
 
             if self._history_due(now):
@@ -186,7 +187,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                     _LOGGER.warning("No se pudo actualizar el histórico VEGGA: %s", err)
 
             self.last_successful_update = now
-            return {"programs": programs, "sectors": sectors, "history": self._history, "history_debug": dict(self.api.history_debug)}
+            return {"programs": programs, "sectors": sectors, "unit_status": unit_status, "history": self._history, "history_debug": dict(self.api.history_debug)}
         except VeggaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except VeggaApiError as err:

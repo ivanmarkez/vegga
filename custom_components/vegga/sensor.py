@@ -54,6 +54,59 @@ def _sector_name(sector: dict[str, Any], fallback: int) -> str:
     return f"Sector {fallback}"
 
 
+
+def _sample_payload(value: Any, depth: int = 0) -> Any:
+    if depth >= 5:
+        return f"<{type(value).__name__}>"
+    if isinstance(value, dict):
+        return {str(k): _sample_payload(v, depth + 1) for k, v in list(value.items())[:40]}
+    if isinstance(value, list):
+        return [_sample_payload(v, depth + 1) for v in value[:8]]
+    if isinstance(value, str):
+        return value[:300]
+    return value
+
+
+def _find_active_refs(payload: Any, kind: str) -> list[dict[str, Any]]:
+    """Best-effort extraction of active program/sector references."""
+    results: list[dict[str, Any]] = []
+    number_keys = {
+        "program": ("program", "programnumber", "program_number", "programid", "program_id", "prog"),
+        "sector": ("sector", "sectornumber", "sector_number", "sectorid", "sector_id"),
+    }[kind]
+
+    def walk(value: Any, path: str = "root") -> None:
+        if isinstance(value, list):
+            for i, child in enumerate(value):
+                walk(child, f"{path}[{i}]")
+            return
+        if not isinstance(value, dict):
+            return
+        normalized = {str(k).casefold().replace("-", "").replace("_", ""): v for k, v in value.items()}
+        active = _is_active(value)
+        ref = None
+        for key in number_keys:
+            nk = key.casefold().replace("-", "").replace("_", "")
+            if nk in normalized and isinstance(normalized[nk], (int, float, str)):
+                ref = normalized[nk]
+                break
+        path_l = path.casefold()
+        if active and (ref is not None or kind in path_l):
+            results.append({"reference": ref, "path": path, "data": _sample_payload(value, 0)})
+        for key, child in value.items():
+            walk(child, f"{path}.{key}")
+
+    walk(payload)
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in results:
+        marker = repr((item.get("reference"), item.get("path")))
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(item)
+    return unique
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -70,6 +123,7 @@ async def async_setup_entry(
         VeggaLastUpdateSensor(coordinator),
         VeggaLastHistoryUpdateSensor(coordinator),
         VeggaHistoryDiagnosticSensor(coordinator),
+        VeggaLiveStatusDiagnosticSensor(coordinator),
     ]
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
         number = _sector_number(sector, fallback)
@@ -117,11 +171,25 @@ class VeggaActiveProgramsSensor(VeggaEntity, SensorEntity):
         self._attr_unique_id = f"{coordinator.api.device_id}_active_programs"
 
     def _active_names(self) -> list[str]:
-        return [
-            _program_name(program, index)
-            for index, program in enumerate((self.coordinator.data or {}).get("programs", []), start=1)
-            if _is_active(program)
-        ]
+        data = self.coordinator.data or {}
+        refs = _find_active_refs(data.get("unit_status"), "program")
+        names: list[str] = []
+        programs = data.get("programs", [])
+        for item in refs:
+            ref = item.get("reference")
+            try:
+                number = int(ref)
+            except (TypeError, ValueError):
+                number = 0
+            if 1 <= number <= len(programs):
+                names.append(_program_name(programs[number - 1], number))
+            elif number >= 0:
+                # Some controller fields are zero-based.
+                if 0 <= number < len(programs):
+                    names.append(_program_name(programs[number], number + 1))
+                else:
+                    names.append(f"Programa {number}")
+        return list(dict.fromkeys(names))
 
     @property
     def native_value(self) -> int:
@@ -159,7 +227,21 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
         self._attr_unique_id = f"{coordinator.api.device_id}_active_sectors"
 
     def _active_names(self) -> list[str]:
-        return [_sector_name(s, i) for i, s in enumerate((self.coordinator.data or {}).get("sectors", []), 1) if _is_active(s)]
+        data = self.coordinator.data or {}
+        refs = _find_active_refs(data.get("unit_status"), "sector")
+        sectors = data.get("sectors", [])
+        names: list[str] = []
+        for item in refs:
+            ref = item.get("reference")
+            try:
+                number = int(ref)
+            except (TypeError, ValueError):
+                number = 0
+            if 1 <= number <= len(sectors):
+                names.append(_sector_name(sectors[number - 1], number))
+            elif 0 <= number < len(sectors):
+                names.append(_sector_name(sectors[number], number + 1))
+        return list(dict.fromkeys(names))
 
     @property
     def native_value(self) -> int:
@@ -168,6 +250,32 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"active_sector_names": self._active_names()}
+
+
+
+class VeggaLiveStatusDiagnosticSensor(VeggaEntity, SensorEntity):
+    _attr_name = "Diagnóstico estado en tiempo real"
+    _attr_icon = "mdi:access-point"
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.api.device_id}_live_status_diagnostic"
+
+    @property
+    def native_value(self) -> str:
+        payload = (self.coordinator.data or {}).get("unit_status")
+        return "Estado recibido" if payload is not None else "Sin estado"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        payload = (self.coordinator.data or {}).get("unit_status")
+        return {
+            "top_level_keys": list(payload.keys()) if isinstance(payload, dict) else [],
+            "active_program_candidates": _find_active_refs(payload, "program"),
+            "active_sector_candidates": _find_active_refs(payload, "sector"),
+            "response_sample": _sample_payload(payload),
+        }
 
 
 class VeggaSectorConsumptionSensor(VeggaSectorEntity, SensorEntity):

@@ -40,6 +40,31 @@ def _is_active(item: dict[str, Any]) -> bool:
     return isinstance(status, str) and status.strip().lower() in {"active", "running", "on", "irrigating"}
 
 
+
+
+def _live_sector_numbers(payload: Any) -> set[int]:
+    found: set[int] = set()
+    def walk(value: Any, path: str = "root") -> None:
+        if isinstance(value, list):
+            for child in value:
+                walk(child, path)
+            return
+        if not isinstance(value, dict):
+            return
+        normalized = {str(k).casefold().replace("-", "").replace("_", ""): v for k, v in value.items()}
+        if _is_active(value) and "sector" in path.casefold():
+            for key in ("sector", "sectornumber", "sectorid", "number", "id"):
+                if key in normalized:
+                    try:
+                        found.add(int(normalized[key]))
+                    except (TypeError, ValueError):
+                        pass
+                    break
+        for key, child in value.items():
+            walk(child, f"{path}.{key}")
+    walk(payload)
+    return found
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -90,6 +115,10 @@ class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
+        data = self.coordinator.data or {}
+        live_numbers = _live_sector_numbers(data.get("unit_status"))
+        if self._number in live_numbers or (self._number - 1) in live_numbers:
+            return True
         sector = self._sector()
         return _is_active(sector) if sector else False
 

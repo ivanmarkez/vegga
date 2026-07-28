@@ -287,6 +287,22 @@ class VeggaApi:
             raise VeggaApiError("VEGGA no devolvió ningún controlador")
         return units
 
+
+    async def get_unit_status(self) -> Any:
+        """Return the controller's live status payload.
+
+        VEGGA's programs and sectors endpoints mainly describe configuration.
+        The unit endpoint with ``add=format`` is the live controller snapshot
+        used by the web application.
+        """
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        return await self._request_url(
+            "GET",
+            f"{API_BASE_URL}/units/{self.device_id}",
+            params={"add": "format"},
+        )
+
     async def get_programs(self) -> list[dict[str, Any]]:
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
