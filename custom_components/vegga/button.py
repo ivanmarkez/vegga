@@ -41,7 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities.extend((VeggaProgramButton(coordinator, number, name, True), VeggaProgramButton(coordinator, number, name, False)))
 
     for fallback, sector in enumerate(data.get("sectors", []), start=1):
-        number = _number(sector, fallback, ("number", "sector", "sectorNumber", "id"))
+        number = _number(sector, fallback, ("number", "sector", "sectorNumber", "sector_number", "index", "code"))
         name = _name(sector, f"Sector {fallback}", ("name", "description", "nombre", "sectorName"))
         entities.extend((VeggaSectorButton(coordinator, number, name, True), VeggaSectorButton(coordinator, number, name, False)))
 

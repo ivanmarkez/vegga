@@ -40,7 +40,7 @@ def _is_active(item: dict[str, Any]) -> bool:
 
 
 def _sector_number(item: dict[str, Any], fallback: int) -> int:
-    for key in ("number", "sector", "sectorNumber", "sector_number", "id"):
+    for key in ("number", "sector", "sectorNumber", "sector_number", "index", "code"):
         value = item.get(key)
         if isinstance(value, int):
             return value if value >= 1 else value + 1
