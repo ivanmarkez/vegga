@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Conectar con VEGGA",
-        "description": "Introduce las credenciales de tu cuenta VEGGA. La integración buscará automáticamente los controladores asociados.",
+        "description": "Introduce las credenciales de tu cuenta VEGGA. La integración buscará automáticamente los controladores asociados.\\n\\nDiagnóstico: {debug}",
         "data": {
           "username": "Usuario VEGGA",
           "password": "Contraseña VEGGA",

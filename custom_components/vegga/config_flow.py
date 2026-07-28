@@ -44,6 +44,7 @@ class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
+        debug_message = ""
 
         if user_input is not None:
             username = str(user_input[CONF_USERNAME]).strip()
@@ -55,12 +56,15 @@ class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
             except VeggaAuthError as err:
                 _LOGGER.error("VEGGA authentication failed: %s", err, exc_info=True)
                 errors["base"] = "invalid_auth"
+                debug_message = str(err)
             except VeggaApiError as err:
                 _LOGGER.error("VEGGA connection/device discovery failed: %s", err, exc_info=True)
                 errors["base"] = "cannot_connect"
+                debug_message = str(err)
             except Exception as err:  # Never hide unexpected config-flow failures
                 _LOGGER.exception("Unexpected VEGGA config flow error: %s", err)
                 errors["base"] = "unknown"
+                debug_message = f"{type(err).__name__}: {err}"
             else:
                 devices: dict[str, str] = {}
                 for unit in units:
@@ -70,6 +74,7 @@ class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
 
                 if not devices:
                     errors["base"] = "no_devices"
+                    debug_message = "El login funcionó, pero la lista de controladores quedó vacía."
                 else:
                     self._credentials = {
                         CONF_USERNAME: username,
@@ -90,7 +95,12 @@ class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): vol.All(vol.Coerce(int), vol.Range(min=15, max=3600)),
             }
         )
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="user",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"debug": debug_message or "Sin diagnóstico todavía."},
+        )
 
     async def async_step_device(
         self, user_input: dict[str, Any] | None = None

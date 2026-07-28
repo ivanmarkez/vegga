@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to VEGGA",
-        "description": "Enter your VEGGA credentials. The integration will automatically discover linked controllers.",
+        "description": "Enter your VEGGA account credentials. The integration will automatically search for linked controllers.\\n\\nDiagnostic: {debug}",
         "data": {
           "username": "VEGGA username",
           "password": "VEGGA password",
