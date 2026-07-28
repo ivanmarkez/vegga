@@ -1,7 +1,10 @@
-# VEGGA Agrónic para Home Assistant — v0.4.14
+# VEGGA Agrónic v0.4.15
 
-Versión temporal de diagnóstico. Consulta el estado vivo mediante
-`/agronic/api/v1/units/{device_id}?add=format` y escribe el JSON completo una
-sola vez en el registro de Home Assistant tras cada reinicio.
+Versión temporal de diagnóstico. Registra una vez tras reiniciar Home Assistant:
 
-Busca en el registro: `VEGGA DIAGNÓSTICO ESTADO COMPLETO`.
+- Estado general del controlador.
+- Entradas analógicas.
+- Entradas digitales.
+- Salidas digitales.
+
+Buscar en los registros: `VEGGA DIAGNÓSTICO ENTRADAS Y SALIDAS`.

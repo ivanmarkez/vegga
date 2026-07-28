@@ -69,6 +69,19 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             unit_status = await self.api.get_unit_status()
             now = datetime.now(timezone.utc)
 
+            # Temporary I/O diagnostic. These calls are isolated so a single
+            # unsupported endpoint never prevents the normal integration update.
+            io_diagnostic: dict[str, Any] = {}
+            for label, getter in (
+                ("ENTRADAS_ANALOGICAS", self.api.get_io_inputs_analog),
+                ("ENTRADAS_DIGITALES", self.api.get_io_inputs_digital),
+                ("SALIDAS_DIGITALES", self.api.get_io_outputs_digital),
+            ):
+                try:
+                    io_diagnostic[label] = await getter()
+                except VeggaApiError as err:
+                    io_diagnostic[label] = {"error": str(err)}
+
             # Temporary diagnostic: write the complete live controller snapshot
             # once after each Home Assistant restart. Warning level makes it
             # visible without requiring debug logging for the integration.
@@ -87,6 +100,21 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                     "VEGGA DIAGNÓSTICO ESTADO COMPLETO dispositivo=%s\n%s",
                     self.api.device_id,
                     live_json,
+                )
+                try:
+                    io_json = json.dumps(
+                        io_diagnostic,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                        default=str,
+                    )
+                except (TypeError, ValueError):
+                    io_json = repr(io_diagnostic)
+                _LOGGER.warning(
+                    "VEGGA DIAGNÓSTICO ENTRADAS Y SALIDAS dispositivo=%s\n%s",
+                    self.api.device_id,
+                    io_json,
                 )
                 self._live_payload_logged = True
 

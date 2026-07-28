@@ -303,6 +303,33 @@ class VeggaApi:
             params={"add": "format"},
         )
 
+    async def get_io_inputs_analog(self) -> Any:
+        """Return live analogue input values from the A-5500."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        return await self._request_url(
+            "GET",
+            f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/io/inputs/ANALOG",
+        )
+
+    async def get_io_inputs_digital(self) -> Any:
+        """Return live digital input values from the A-5500."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        return await self._request_url(
+            "GET",
+            f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/io/inputs/DIGITAL",
+        )
+
+    async def get_io_outputs_digital(self) -> Any:
+        """Return live digital output values from the A-5500."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        return await self._request_url(
+            "GET",
+            f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/io/outputs/DIGITAL",
+        )
+
     async def get_programs(self) -> list[dict[str, Any]]:
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
