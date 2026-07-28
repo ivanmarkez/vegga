@@ -107,35 +107,6 @@ def _find_active_refs(payload: Any, kind: str) -> list[dict[str, Any]]:
     return unique
 
 
-def _runtime_program_number(sector: dict[str, Any]) -> int | None:
-    for key in ("xProgramN", "xProgram", "programNumber", "program"):
-        value = sector.get(key)
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            continue
-        if number > 0:
-            return number
-    return None
-
-
-def _program_by_number(programs: list[dict[str, Any]], number: int) -> dict[str, Any] | None:
-    for program in programs:
-        pk = program.get("pk")
-        candidates = [program.get("id"), program.get("number"), program.get("programNumber")]
-        if isinstance(pk, dict):
-            candidates.append(pk.get("id"))
-        for candidate in candidates:
-            try:
-                if int(candidate) == number:
-                    return program
-            except (TypeError, ValueError):
-                pass
-    if 1 <= number <= len(programs):
-        return programs[number - 1]
-    return None
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -201,14 +172,23 @@ class VeggaActiveProgramsSensor(VeggaEntity, SensorEntity):
 
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
-        programs = data.get("programs", [])
+        refs = _find_active_refs(data.get("unit_status"), "program")
         names: list[str] = []
-        for sector in data.get("active_sectors", []):
-            number = _runtime_program_number(sector)
-            if number is None:
-                continue
-            program = _program_by_number(programs, number)
-            names.append(_program_name(program, number) if program else f"Programa {number}")
+        programs = data.get("programs", [])
+        for item in refs:
+            ref = item.get("reference")
+            try:
+                number = int(ref)
+            except (TypeError, ValueError):
+                number = 0
+            if 1 <= number <= len(programs):
+                names.append(_program_name(programs[number - 1], number))
+            elif number >= 0:
+                # Some controller fields are zero-based.
+                if 0 <= number < len(programs):
+                    names.append(_program_name(programs[number], number + 1))
+                else:
+                    names.append(f"Programa {number}")
         return list(dict.fromkeys(names))
 
     @property
@@ -248,9 +228,19 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
 
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
+        refs = _find_active_refs(data.get("unit_status"), "sector")
+        sectors = data.get("sectors", [])
         names: list[str] = []
-        for fallback, sector in enumerate(data.get("active_sectors", []), start=1):
-            names.append(_sector_name(sector, fallback))
+        for item in refs:
+            ref = item.get("reference")
+            try:
+                number = int(ref)
+            except (TypeError, ValueError):
+                number = 0
+            if 1 <= number <= len(sectors):
+                names.append(_sector_name(sectors[number - 1], number))
+            elif 0 <= number < len(sectors):
+                names.append(_sector_name(sectors[number], number + 1))
         return list(dict.fromkeys(names))
 
     @property
@@ -274,15 +264,16 @@ class VeggaLiveStatusDiagnosticSensor(VeggaEntity, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        payload = (self.coordinator.data or {}).get("active_sectors")
-        return f"{len(payload)} sectores regando" if isinstance(payload, list) else "Sin estado"
+        payload = (self.coordinator.data or {}).get("unit_status")
+        return "Estado recibido" if payload is not None else "Sin estado"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        payload = (self.coordinator.data or {}).get("active_sectors")
+        payload = (self.coordinator.data or {}).get("unit_status")
         return {
-            "endpoint": f"/units/{self.coordinator.api.device_id}/sectors?irrigation=true",
-            "active_sector_count": len(payload) if isinstance(payload, list) else 0,
+            "top_level_keys": list(payload.keys()) if isinstance(payload, dict) else [],
+            "active_program_candidates": _find_active_refs(payload, "program"),
+            "active_sector_candidates": _find_active_refs(payload, "sector"),
             "response_sample": _sample_payload(payload),
         }
 
