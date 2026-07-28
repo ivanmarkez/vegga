@@ -3,11 +3,12 @@
     "step": {
       "user": {
         "title": "Conectar con VEGGA",
-        "description": "Introduce las credenciales de tu cuenta VEGGA. La integración buscará automáticamente los controladores asociados.\\n\\nDiagnóstico: {debug}",
+        "description": "Introduce tus credenciales VEGGA y el ID del Agrónic. La detección automática queda desactivada temporalmente para evitar el fallo del identificador interno.\\n\\nDiagnóstico: {debug}",
         "data": {
           "username": "Usuario VEGGA",
           "password": "Contraseña VEGGA",
-          "scan_interval": "Intervalo de actualización (segundos)"
+          "scan_interval": "Intervalo de actualización (segundos)",
+          "device_id": "ID del Agrónic"
         }
       },
       "device": {
@@ -19,7 +20,7 @@
       }
     },
     "error": {
-      "cannot_connect": "No se pudo conectar con VEGGA o localizar los controladores.",
+      "cannot_connect": "No se pudo conectar con VEGGA.",
       "invalid_auth": "Usuario o contraseña incorrectos.",
       "no_devices": "No se encontraron controladores en esta cuenta.",
       "unknown": "Error inesperado. Revisa el registro de Home Assistant."

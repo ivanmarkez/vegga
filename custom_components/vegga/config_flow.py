@@ -15,30 +15,10 @@ from .const import CONF_DEVICE_ID, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DO
 _LOGGER = logging.getLogger(__name__)
 
 
-def _unit_id(unit: dict[str, Any]) -> str | None:
-    for key in ("deviceId", "device_id", "unitId", "unit_id", "id", "pk"):
-        value = unit.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return None
-
-
-def _unit_label(unit: dict[str, Any], device_id: str) -> str:
-    for key in ("name", "description", "alias", "deviceName", "unitName"):
-        value = unit.get(key)
-        if value:
-            return f"{value} ({device_id})"
-    return f"Agrónic {device_id}"
-
-
 class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Configure VEGGA."""
 
     VERSION = 2
-
-    def __init__(self) -> None:
-        self._credentials: dict[str, Any] = {}
-        self._devices: dict[str, str] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -49,47 +29,50 @@ class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             username = str(user_input[CONF_USERNAME]).strip()
             password = str(user_input[CONF_PASSWORD])
-            api = VeggaApi(async_get_clientsession(self.hass), username, password)
+            device_id = str(user_input[CONF_DEVICE_ID]).strip()
+            scan_interval = int(user_input[CONF_SCAN_INTERVAL])
+
+            api = VeggaApi(
+                async_get_clientsession(self.hass),
+                username,
+                password,
+                device_id,
+            )
+
             try:
+                # Validate only the credentials here. Device discovery is skipped
+                # because VEGGA uses an undocumented internal user identifier.
                 await api.async_login()
-                units = await api.get_units()
             except VeggaAuthError as err:
                 _LOGGER.error("VEGGA authentication failed: %s", err, exc_info=True)
                 errors["base"] = "invalid_auth"
                 debug_message = str(err)
             except VeggaApiError as err:
-                _LOGGER.error("VEGGA connection/device discovery failed: %s", err, exc_info=True)
+                _LOGGER.error("VEGGA connection failed: %s", err, exc_info=True)
                 errors["base"] = "cannot_connect"
                 debug_message = str(err)
-            except Exception as err:  # Never hide unexpected config-flow failures
+            except Exception as err:
                 _LOGGER.exception("Unexpected VEGGA config flow error: %s", err)
                 errors["base"] = "unknown"
                 debug_message = f"{type(err).__name__}: {err}"
             else:
-                devices: dict[str, str] = {}
-                for unit in units:
-                    device_id = _unit_id(unit)
-                    if device_id:
-                        devices[device_id] = _unit_label(unit, device_id)
-
-                if not devices:
-                    errors["base"] = "no_devices"
-                    debug_message = "El login funcionó, pero la lista de controladores quedó vacía."
-                else:
-                    self._credentials = {
+                await self.async_set_unique_id(device_id)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=f"Agrónic {device_id}",
+                    data={
                         CONF_USERNAME: username,
                         CONF_PASSWORD: password,
-                        CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
-                    }
-                    self._devices = devices
-                    if len(devices) == 1:
-                        return await self._create_device_entry(next(iter(devices)))
-                    return await self.async_step_device()
+                        CONF_DEVICE_ID: device_id,
+                        CONF_SCAN_INTERVAL: scan_interval,
+                    },
+                )
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_USERNAME): str,
                 vol.Required(CONF_PASSWORD): str,
+                vol.Required(CONF_DEVICE_ID, default="17669"): str,
                 vol.Optional(
                     CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
                 ): vol.All(vol.Coerce(int), vol.Range(min=15, max=3600)),
@@ -99,26 +82,5 @@ class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=schema,
             errors=errors,
-            description_placeholders={"debug": debug_message or "Sin diagnóstico todavía."},
-        )
-
-    async def async_step_device(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        if user_input is not None:
-            return await self._create_device_entry(str(user_input[CONF_DEVICE_ID]))
-
-        return self.async_show_form(
-            step_id="device",
-            data_schema=vol.Schema(
-                {vol.Required(CONF_DEVICE_ID): vol.In(self._devices)}
-            ),
-        )
-
-    async def _create_device_entry(self, device_id: str) -> ConfigFlowResult:
-        await self.async_set_unique_id(device_id)
-        self._abort_if_unique_id_configured()
-        return self.async_create_entry(
-            title=self._devices.get(device_id, f"Agrónic {device_id}"),
-            data={**self._credentials, CONF_DEVICE_ID: device_id},
+            description_placeholders={"debug": debug_message or "Sin errores."},
         )

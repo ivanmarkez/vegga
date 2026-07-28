@@ -1,8 +1,3 @@
-# VEGGA para Home Assistant
+# VEGGA Home Assistant v0.2.7
 
-Versión 0.2.6.
-
-- Inicio de sesión automático con usuario y contraseña.
-- Renovación automática del token.
-- Descubrimiento del Agrónic asociado a la cuenta.
-- Corrección del identificador interno de usuario Agrónic para la cuenta probada.
+Login automático con usuario y contraseña. Configuración manual del ID del Agrónic para evitar el endpoint de descubrimiento no documentado.
