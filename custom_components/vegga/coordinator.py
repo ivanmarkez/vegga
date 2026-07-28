@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import (
-    DataUpdateCoordinator,
-    UpdateFailed,
-)
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import VeggaApi, VeggaApiError, VeggaAuthError
 from .const import DOMAIN
@@ -33,11 +30,22 @@ class VeggaCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             config_entry=entry,
         )
         self.api = api
+        self.last_successful_update: datetime | None = None
+        self.last_command: str | None = None
+        self.last_command_at: datetime | None = None
 
     async def _async_update_data(self) -> list[dict[str, Any]]:
         try:
-            return await self.api.get_programs()
+            programs = await self.api.get_programs()
+            self.last_successful_update = datetime.now(timezone.utc)
+            return programs
         except VeggaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except VeggaApiError as err:
             raise UpdateFailed(str(err)) from err
+
+    def record_command(self, command: str) -> None:
+        """Store the last manual command sent through Home Assistant."""
+        self.last_command = command
+        self.last_command_at = datetime.now(timezone.utc)
+        self.async_update_listeners()
