@@ -40,7 +40,6 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self.last_command: str | None = None
         self.last_command_at: datetime | None = None
         self._history: list[dict[str, Any]] = []
-        self._live_payload_logged = False
 
     @staticmethod
     def _normalize_name(value: Any) -> str:
@@ -62,48 +61,6 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             or now - self.last_history_update >= timedelta(minutes=HISTORY_REFRESH_MINUTES)
         )
 
-    @staticmethod
-    def _runtime_matches(payload: Any, path: str = "$") -> list[dict[str, Any]]:
-        """Return compact matches for fields likely to expose live runtime state."""
-        keywords = (
-            "active", "running", "run", "status", "state", "value", "output",
-            "program", "prog", "sector", "remaining", "remain", "timeleft",
-            "manual", "irrig", "operative", "working", "started", "xstatus",
-        )
-        matches: list[dict[str, Any]] = []
-
-        def walk(value: Any, current: str, depth: int) -> None:
-            if depth > 9 or len(matches) >= 250:
-                return
-            if isinstance(value, dict):
-                for key, child in value.items():
-                    child_path = f"{current}.{key}"
-                    normalized = str(key).casefold().replace("_", "")
-                    if any(word in normalized for word in keywords):
-                        if isinstance(child, (str, int, float, bool)) or child is None:
-                            matches.append({"path": child_path, "value": child})
-                        elif isinstance(child, list):
-                            matches.append({"path": child_path, "type": "list", "length": len(child)})
-                        elif isinstance(child, dict):
-                            matches.append({"path": child_path, "type": "object", "keys": list(child)[:20]})
-                    walk(child, child_path, depth + 1)
-            elif isinstance(value, list):
-                for index, child in enumerate(value[:100]):
-                    walk(child, f"{current}[{index}]", depth + 1)
-
-        walk(payload, path, 0)
-        return matches
-
-    @staticmethod
-    def _diagnostic_json(payload: Any, limit: int = 18000) -> str:
-        try:
-            text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
-        except (TypeError, ValueError):
-            text = repr(payload)
-        if len(text) > limit:
-            return text[:limit] + f"\n... [TRUNCADO: {len(text) - limit} caracteres restantes]"
-        return text
-
     async def _async_update_data(self) -> dict[str, list[dict[str, Any]]]:
         try:
             programs = await self.api.get_programs()
@@ -111,29 +68,14 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             unit_status = await self.api.get_unit_status()
             now = datetime.now(timezone.utc)
 
-            # Temporary runtime endpoint probe. It runs once after each Home
-            # Assistant restart and never blocks the normal integration update.
-            if not self._live_payload_logged:
-                try:
-                    diagnostic = await self.api.get_runtime_diagnostic_candidates()
-                except Exception as err:  # Defensive: diagnostics must never break HA.
-                    diagnostic = {"DIAGNOSTIC_GLOBAL_ERROR": repr(err)}
-
-                _LOGGER.warning(
-                    "VEGGA DIAGNÓSTICO RUNTIME ÍNDICE dispositivo=%s endpoints=%s",
-                    self.api.device_id,
-                    list(diagnostic),
-                )
-                for label, payload in diagnostic.items():
-                    matches = self._runtime_matches(payload)
-                    _LOGGER.warning(
-                        "VEGGA DIAGNÓSTICO RUNTIME %s dispositivo=%s\nCOINCIDENCIAS=%s\nRESPUESTA=%s",
-                        label,
-                        self.api.device_id,
-                        self._diagnostic_json(matches, limit=12000),
-                        self._diagnostic_json(payload, limit=18000),
-                    )
-                self._live_payload_logged = True
+            # Runtime sector state used by the VEGGA web application.  Keep
+            # this isolated: a temporary API failure must not take the complete
+            # integration offline.
+            try:
+                irrigating_sectors = await self.api.get_irrigating_sectors()
+            except VeggaApiError as err:
+                irrigating_sectors = []
+                _LOGGER.debug("No se pudo actualizar el estado de riego VEGGA: %s", err)
 
             if self._history_due(now):
                 try:
@@ -254,7 +196,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                     _LOGGER.warning("No se pudo actualizar el histórico VEGGA: %s", err)
 
             self.last_successful_update = now
-            return {"programs": programs, "sectors": sectors, "unit_status": unit_status, "history": self._history, "history_debug": dict(self.api.history_debug)}
+            return {"programs": programs, "sectors": sectors, "irrigating_sectors": irrigating_sectors, "unit_status": unit_status, "history": self._history, "history_debug": dict(self.api.history_debug)}
         except VeggaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except VeggaApiError as err:

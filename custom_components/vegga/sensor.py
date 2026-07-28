@@ -54,6 +54,38 @@ def _sector_name(sector: dict[str, Any], fallback: int) -> str:
     return f"Sector {fallback}"
 
 
+def _runtime_program_number(sector: dict[str, Any]) -> int:
+    for key in ("xProgramN", "xprogramn", "program", "programNumber", "programId"):
+        value = sector.get(key)
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            return number
+    return 0
+
+
+def _runtime_sector_number(sector: dict[str, Any], fallback: int = 0) -> int:
+    pk = sector.get("pk")
+    candidates = [
+        sector.get("_agronic_number"),
+        sector.get("sector"),
+        sector.get("sectorNumber"),
+        sector.get("number"),
+        sector.get("id"),
+        pk.get("id") if isinstance(pk, dict) else None,
+    ]
+    for value in candidates:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            return number
+    return fallback
+
+
 
 def _sample_payload(value: Any, depth: int = 0) -> Any:
     if depth >= 5:
@@ -172,15 +204,19 @@ class VeggaActiveProgramsSensor(VeggaEntity, SensorEntity):
 
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
-        refs = _find_active_refs(data.get("unit_status"), "program")
+        runtime = data.get("irrigating_sectors", [])
+        numbers = [_runtime_program_number(item) for item in runtime if isinstance(item, dict)]
+        if not any(numbers):
+            refs = _find_active_refs(data.get("unit_status"), "program")
+            numbers = []
+            for item in refs:
+                try:
+                    numbers.append(int(item.get("reference")))
+                except (TypeError, ValueError):
+                    pass
         names: list[str] = []
         programs = data.get("programs", [])
-        for item in refs:
-            ref = item.get("reference")
-            try:
-                number = int(ref)
-            except (TypeError, ValueError):
-                number = 0
+        for number in numbers:
             if 1 <= number <= len(programs):
                 names.append(_program_name(programs[number - 1], number))
             elif number >= 0:
@@ -228,15 +264,31 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
 
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
-        refs = _find_active_refs(data.get("unit_status"), "sector")
+        runtime = data.get("irrigating_sectors", [])
+        numbers = [
+            _runtime_sector_number(item, index)
+            for index, item in enumerate(runtime, start=1)
+            if isinstance(item, dict) and (_runtime_program_number(item) > 0 or _is_active(item))
+        ]
+        # The endpoint is already filtered with irrigation=true. Some firmware
+        # versions omit an explicit active flag but still return only active rows.
+        if runtime and not numbers:
+            numbers = [
+                _runtime_sector_number(item, index)
+                for index, item in enumerate(runtime, start=1)
+                if isinstance(item, dict)
+            ]
+        if not numbers:
+            refs = _find_active_refs(data.get("unit_status"), "sector")
+            numbers = []
+            for item in refs:
+                try:
+                    numbers.append(int(item.get("reference")))
+                except (TypeError, ValueError):
+                    pass
         sectors = data.get("sectors", [])
         names: list[str] = []
-        for item in refs:
-            ref = item.get("reference")
-            try:
-                number = int(ref)
-            except (TypeError, ValueError):
-                number = 0
+        for number in numbers:
             if 1 <= number <= len(sectors):
                 names.append(_sector_name(sectors[number - 1], number))
             elif 0 <= number < len(sectors):

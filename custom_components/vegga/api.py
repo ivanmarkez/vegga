@@ -330,38 +330,6 @@ class VeggaApi:
             f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/io/outputs/DIGITAL",
         )
 
-
-    async def get_runtime_diagnostic_candidates(self) -> dict[str, Any]:
-        """Probe read-only endpoints observed in the VEGGA web application.
-
-        This is temporary diagnostic code. Every request is GET-only and each
-        failure is returned independently so unsupported routes never break the
-        normal integration update.
-        """
-        device = self.device_id
-        candidates: tuple[tuple[str, str, dict[str, Any] | None], ...] = (
-            ("AGRONIC_MANUAL", f"{API_BASE_URL}/units/{device}/manual", None),
-            ("AGRONIC_CONFIG", f"{API_BASE_URL}/units/{device}/config", {"add": ["fertilizer", "agitators"]}),
-            ("AGRONIC_PROGRAMS", f"{API_BASE_URL}/units/{device}/programs", None),
-            ("AGRONIC_SECTORS", f"{API_BASE_URL}/units/{device}/sectors", None),
-            ("AGRONIC_ANALOGS_ACTIVE", f"{API_BASE_URL}/units/{device}/analogs", {"active": "true"}),
-            ("AGRONIC_DIGITALS_ACTIVE", f"{API_BASE_URL}/units/{device}/digitals", {"active": "true"}),
-            ("AGRONIC_LOGICS_ACTIVE", f"{API_BASE_URL}/units/{device}/logics", {"active": "true"}),
-            ("AGRONIC_METERS", f"{API_BASE_URL}/units/{device}/meters", {"operative": "false"}),
-            ("IRRIGATION_FERTILIZERS", f"{HISTORY_BASE_URL}/devices/A5500/{device}/fertilizers", None),
-            ("IRRIGATION_IO_INPUT_ANALOG", f"{HISTORY_BASE_URL}/devices/A5500/{device}/io/inputs/ANALOG", None),
-            ("IRRIGATION_IO_INPUT_DIGITAL", f"{HISTORY_BASE_URL}/devices/A5500/{device}/io/inputs/DIGITAL", None),
-            ("IRRIGATION_IO_OUTPUT_DIGITAL", f"{HISTORY_BASE_URL}/devices/A5500/{device}/io/outputs/DIGITAL", None),
-        )
-
-        results: dict[str, Any] = {}
-        for label, url, params in candidates:
-            try:
-                results[label] = await self._request_url("GET", url, params=params)
-            except VeggaApiError as err:
-                results[label] = {"_diagnostic_error": str(err)}
-        return results
-
     async def get_programs(self) -> list[dict[str, Any]]:
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
@@ -409,6 +377,28 @@ class VeggaApi:
             found = VeggaApi._extract_nested_list(value, preferred_keys)
             if found:
                 return found
+        return []
+
+    async def get_irrigating_sectors(self) -> list[dict[str, Any]]:
+        """Return the live sector data used by VEGGA while irrigation is active.
+
+        The VEGGA frontend requests ``/units/{id}/sectors?irrigation=true``.
+        On the A-5500 these objects expose runtime fields such as ``xProgramN``.
+        An empty or changed response is treated as no active irrigation so it
+        never prevents the rest of the integration from loading.
+        """
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request_url(
+            "GET",
+            f"{API_BASE_URL}/units/{self.device_id}/sectors",
+            params={"irrigation": "true"},
+        )
+        sectors = self._extract_nested_list(
+            data, ("sectors", "content", "data", "items", "results", "value")
+        )
+        if sectors or isinstance(data, list):
+            return [dict(item) for item in sectors]
         return []
 
     async def get_sectors(self) -> list[dict[str, Any]]:
