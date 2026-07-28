@@ -436,7 +436,7 @@ class VeggaApi:
         page_number: int = 1,
         page_size: int = 2000,
     ) -> list[dict[str, Any]]:
-        """Return all historical irrigation rows, following VEGGA pagination."""
+        """Return historical irrigation rows, following VEGGA's 1-based requests."""
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
 
@@ -469,28 +469,32 @@ class VeggaApi:
                 )
             return rows
 
-        # VEGGA has returned both zero-based and one-based page metadata in
-        # different calls. Read page 0 and page 1, then continue until all
-        # reported elements have been collected. Duplicate rows are removed.
-        pages_to_fetch: list[int] = [0, 1]
-        fetched_pages: list[int] = []
         all_records: list[dict[str, Any]] = []
+        pages_fetched: list[int] = []
         first_payload: Any = None
         total_elements: int | None = None
         effective_page_size: int | None = None
-        safety_limit = 200
+        current_page = max(1, page_number)
 
-        while pages_to_fetch and len(fetched_pages) < safety_limit:
-            current_page = pages_to_fetch.pop(0)
-            if current_page in fetched_pages:
-                continue
+        # The working VEGGA call uses pageNumber=1. Never probe page 0 because
+        # some deployments reject it and that makes the whole history refresh fail.
+        for _ in range(200):
             params = {**base_params, "pageNumber": current_page}
-            payload = await self._request_url("GET", url, params=params)
-            fetched_pages.append(current_page)
+            try:
+                payload = await self._request_url("GET", url, params=params)
+            except VeggaApiError:
+                if not all_records:
+                    raise
+                # Keep already downloaded pages if a later page is rejected.
+                break
+
+            pages_fetched.append(current_page)
             if first_payload is None:
                 first_payload = payload
 
             page_records = _records(payload)
+            if not page_records:
+                break
             all_records.extend(page_records)
 
             if isinstance(payload, dict):
@@ -503,24 +507,16 @@ class VeggaApi:
                 except (TypeError, ValueError):
                     pass
 
-            if total_elements is not None:
-                size = effective_page_size or len(page_records) or page_size
-                if size > 0:
-                    last_page = (total_elements - 1) // size
-                    # Include one extra index because some deployments expose
-                    # one-based pages while reporting a zero-based last page.
-                    for candidate in range(0, last_page + 2):
-                        if candidate not in fetched_pages and candidate not in pages_to_fetch:
-                            pages_to_fetch.append(candidate)
-            elif page_records:
-                candidate = current_page + 1
-                if candidate not in fetched_pages and candidate not in pages_to_fetch:
-                    pages_to_fetch.append(candidate)
-            else:
-                # No metadata and an empty page means there is nothing else.
-                pages_to_fetch = [p for p in pages_to_fetch if p <= current_page]
+            if total_elements is not None and len(all_records) >= total_elements:
+                break
 
-        # Deduplicate records returned by overlapping zero/one-based pages.
+            # If VEGGA reports fewer rows than its effective page size, this is
+            # the final page. Otherwise request the next 1-based page.
+            size = effective_page_size or page_size
+            if size > 0 and len(page_records) < size:
+                break
+            current_page += 1
+
         unique_records: list[dict[str, Any]] = []
         seen: set[str] = set()
         for record in all_records:
@@ -535,12 +531,11 @@ class VeggaApi:
 
         self.history_debug = {
             "url": url,
-            "params": {**base_params, "pageNumber": "0..N"},
+            "params": {**base_params, "pageNumber": f"{max(1, page_number)}..N"},
             "sector_requested": sector,
-            "pages_fetched": fetched_pages,
+            "pages_fetched": pages_fetched,
             "total_elements_reported": total_elements,
             "effective_page_size": effective_page_size,
-            "raw_record_count": len(all_records),
             "parsed_record_count": len(unique_records),
             "top_level_keys": list(first_payload.keys())[:30] if isinstance(first_payload, dict) else [type(first_payload).__name__],
             "response_sample": _sample(first_payload),
@@ -548,11 +543,7 @@ class VeggaApi:
         if unique_records:
             self.history_debug["first_record"] = _sample(unique_records[0])
         else:
-            _LOGGER.warning(
-                "VEGGA returned no parseable sector history for sector=%s; pages=%s",
-                sector,
-                fetched_pages,
-            )
+            _LOGGER.warning("VEGGA returned no parseable sector history; pages=%s", pages_fetched)
         return unique_records
 
     async def manual_action(self, action: int, parameter1: int) -> Any:

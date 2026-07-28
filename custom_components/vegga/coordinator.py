@@ -42,7 +42,6 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
 
     @staticmethod
     def _normalize_name(value: Any) -> str:
-        """Normalize sector names across Agrónic and history responses."""
         text = unicodedata.normalize("NFKD", str(value or ""))
         text = "".join(char for char in text if not unicodedata.combining(char))
         return re.sub(r"[^a-z0-9]+", "", text.casefold())
