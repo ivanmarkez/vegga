@@ -40,6 +40,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self.last_command: str | None = None
         self.last_command_at: datetime | None = None
         self._history: list[dict[str, Any]] = []
+        self._live_payload_logged = False
 
     @staticmethod
     def _normalize_name(value: Any) -> str:
@@ -67,6 +68,27 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             sectors = await self.api.get_sectors()
             unit_status = await self.api.get_unit_status()
             now = datetime.now(timezone.utc)
+
+            # Temporary diagnostic: write the complete live controller snapshot
+            # once after each Home Assistant restart. Warning level makes it
+            # visible without requiring debug logging for the integration.
+            if not self._live_payload_logged:
+                try:
+                    live_json = json.dumps(
+                        unit_status,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                        default=str,
+                    )
+                except (TypeError, ValueError):
+                    live_json = repr(unit_status)
+                _LOGGER.warning(
+                    "VEGGA DIAGNÓSTICO ESTADO COMPLETO dispositivo=%s\n%s",
+                    self.api.device_id,
+                    live_json,
+                )
+                self._live_payload_logged = True
 
             if self._history_due(now):
                 try:

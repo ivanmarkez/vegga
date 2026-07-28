@@ -1,4 +1,7 @@
-# VEGGA Home Assistant v0.4.4
+# VEGGA Agrónic para Home Assistant — v0.4.14
 
-Corrección del mapeo entre sectores del Agrónic y el histórico VEGGA.
-Interpreta correctamente `volume.value`, `time.value`, `dateFrom`, `dateTo` y `flow`.
+Versión temporal de diagnóstico. Consulta el estado vivo mediante
+`/agronic/api/v1/units/{device_id}?add=format` y escribe el JSON completo una
+sola vez en el registro de Home Assistant tras cada reinicio.
+
+Busca en el registro: `VEGGA DIAGNÓSTICO ESTADO COMPLETO`.
