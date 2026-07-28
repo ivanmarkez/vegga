@@ -265,13 +265,24 @@ class VeggaApi:
         profile = await self._request_url(
             "GET", f"{CORE_BASE_URL}/users/{self._username}/auth"
         )
-        _LOGGER.debug("VEGGA auth profile received: %s", profile)
-        user_id = self._find_user_id(profile)
+        # Diagnóstico temporal: mostramos la respuesta exacta del perfil antes
+        # de intentar extraer el identificador Agrónic. Esto permite conocer
+        # qué campo contiene el ID correcto sin depender del nivel DEBUG.
+        try:
+            profile_text = json.dumps(profile, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            profile_text = repr(profile)
 
-        if not user_id:
-            raise VeggaApiError("No se pudo obtener el identificador de usuario Agrónic")
+        _LOGGER.warning("VEGGA auth profile received: %s", profile_text)
+        raise VeggaApiError(
+            "DIAGNÓSTICO PERFIL VEGGA: " + profile_text[:4000]
+        )
 
-        data = await self._request("GET", f"/users/{user_id}/units")
+        # Se reactivará cuando conozcamos el nombre exacto del campo ID.
+        # user_id = self._find_user_id(profile)
+        # if not user_id:
+        #     raise VeggaApiError("No se pudo obtener el identificador de usuario Agrónic")
+        # data = await self._request("GET", f"/users/{user_id}/units")
         units = self._extract_list(
             data, ("content", "data", "units", "items", "results")
         )

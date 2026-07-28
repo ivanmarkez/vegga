@@ -19,5 +19,5 @@ Copia `custom_components/vegga` dentro de la carpeta `custom_components` de Home
 La configuración solicita usuario, contraseña e intervalo de actualización. No requiere pegar manualmente un Bearer Token.
 
 
-## v0.2.4
+## v0.2.5
 Corrige la identificación del usuario Agrónic: ya no usa el claim `sub` del JWT para consultar los controladores.
