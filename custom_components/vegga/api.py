@@ -292,6 +292,18 @@ class VeggaApi:
             return programs
         raise VeggaApiError("Formato de programas no reconocido")
 
+    async def get_sectors(self) -> list[dict[str, Any]]:
+        """Return irrigation sectors configured in the controller."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request("GET", f"/units/{self.device_id}/sectors")
+        sectors = self._extract_list(
+            data, ("content", "data", "sectors", "items", "results")
+        )
+        if sectors or isinstance(data, list):
+            return sectors
+        raise VeggaApiError("Formato de sectores no reconocido")
+
     async def manual_action(self, action: int, parameter1: int) -> Any:
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
@@ -310,3 +322,11 @@ class VeggaApi:
 
     async def stop_program(self, program_number: int) -> Any:
         return await self.manual_action(5, program_number - 1)
+
+    async def start_sector(self, sector_number: int) -> Any:
+        """Start a sector manually. HAR: action 9, zero-based parameter1."""
+        return await self.manual_action(9, sector_number - 1)
+
+    async def stop_sector(self, sector_number: int) -> Any:
+        """Stop a sector manually. HAR: action 8, zero-based parameter1."""
+        return await self.manual_action(8, sector_number - 1)

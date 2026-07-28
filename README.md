@@ -13,3 +13,9 @@ Integración no oficial para Agrónic A-5500 mediante VEGGA.
 - Sensor binario de conexión con VEGGA.
 
 > El ID del Agrónic se introduce manualmente mientras se termina de documentar el endpoint interno de descubrimiento de equipos.
+
+
+## 0.3.1
+- Lectura de sectores desde `/units/{device_id}/sectors`.
+- Botones de iniciar/parar sector (acciones 9/8 confirmadas en HAR).
+- Sensores de sectores y sectores activos.

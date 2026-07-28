@@ -48,6 +48,8 @@ async def async_setup_entry(
         [
             VeggaProgramsSensor(coordinator),
             VeggaActiveProgramsSensor(coordinator),
+            VeggaSectorsSensor(coordinator),
+            VeggaActiveSectorsSensor(coordinator),
             VeggaLastCommandSensor(coordinator),
             VeggaLastUpdateSensor(coordinator),
         ]
@@ -64,11 +66,11 @@ class VeggaProgramsSensor(VeggaEntity, SensorEntity):
 
     @property
     def native_value(self) -> int:
-        return len(self.coordinator.data or [])
+        return len((self.coordinator.data or {}).get("programs", []))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        programs = self.coordinator.data or []
+        programs = (self.coordinator.data or {}).get("programs", [])
         return {
             "device_id": self.coordinator.api.device_id,
             "program_names": [
@@ -93,13 +95,59 @@ class VeggaActiveProgramsSensor(VeggaEntity, SensorEntity):
     def _active_names(self) -> list[str]:
         return [
             _program_name(program, index)
-            for index, program in enumerate(self.coordinator.data or [], start=1)
+            for index, program in enumerate((self.coordinator.data or {}).get("programs", []), start=1)
             if _is_active(program)
         ]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"active_program_names": self._active_names()}
+
+
+def _sector_name(sector: dict[str, Any], fallback: int) -> str:
+    for key in ("name", "description", "nombre", "sectorName"):
+        value = sector.get(key)
+        if value:
+            return str(value)
+    return f"Sector {fallback}"
+
+
+class VeggaSectorsSensor(VeggaEntity, SensorEntity):
+    _attr_name = "Sectores"
+    _attr_icon = "mdi:pipe-valve"
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.api.device_id}_sectors"
+
+    @property
+    def native_value(self) -> int:
+        return len((self.coordinator.data or {}).get("sectors", []))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        sectors = (self.coordinator.data or {}).get("sectors", [])
+        return {"sector_names": [_sector_name(s, i) for i, s in enumerate(sectors, 1)]}
+
+
+class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
+    _attr_name = "Sectores activos"
+    _attr_icon = "mdi:water-pump"
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.api.device_id}_active_sectors"
+
+    def _active_names(self) -> list[str]:
+        return [_sector_name(s, i) for i, s in enumerate((self.coordinator.data or {}).get("sectors", []), 1) if _is_active(s)]
+
+    @property
+    def native_value(self) -> int:
+        return len(self._active_names())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"active_sector_names": self._active_names()}
 
 
 class VeggaLastCommandSensor(VeggaEntity, SensorEntity):

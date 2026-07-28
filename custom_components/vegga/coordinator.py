@@ -12,16 +12,10 @@ from .api import VeggaApi, VeggaApiError, VeggaAuthError
 from .const import DOMAIN
 
 
-class VeggaCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
-    """Coordinator for VEGGA program data."""
+class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
+    """Coordinator for VEGGA programs and sectors."""
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        api: VeggaApi,
-        scan_interval: int,
-    ) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, api: VeggaApi, scan_interval: int) -> None:
         super().__init__(
             hass,
             logger=__import__("logging").getLogger(__name__),
@@ -34,18 +28,18 @@ class VeggaCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.last_command: str | None = None
         self.last_command_at: datetime | None = None
 
-    async def _async_update_data(self) -> list[dict[str, Any]]:
+    async def _async_update_data(self) -> dict[str, list[dict[str, Any]]]:
         try:
             programs = await self.api.get_programs()
+            sectors = await self.api.get_sectors()
             self.last_successful_update = datetime.now(timezone.utc)
-            return programs
+            return {"programs": programs, "sectors": sectors}
         except VeggaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except VeggaApiError as err:
             raise UpdateFailed(str(err)) from err
 
     def record_command(self, command: str) -> None:
-        """Store the last manual command sent through Home Assistant."""
         self.last_command = command
         self.last_command_at = datetime.now(timezone.utc)
         self.async_update_listeners()
