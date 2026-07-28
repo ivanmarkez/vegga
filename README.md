@@ -1,10 +1,5 @@
-# VEGGA Agrónic v0.4.15
+# VEGGA Agrónic v0.4.16
 
-Versión temporal de diagnóstico. Registra una vez tras reiniciar Home Assistant:
-
-- Estado general del controlador.
-- Entradas analógicas.
-- Entradas digitales.
-- Salidas digitales.
-
-Buscar en los registros: `VEGGA DIAGNÓSTICO ENTRADAS Y SALIDAS`.
+Versión temporal de diagnóstico de estado en tiempo real. Consulta una lista
+limitada de endpoints GET observados en la aplicación web y registra por separado
+la respuesta y los campos candidatos de programa, sector y estado activo.
