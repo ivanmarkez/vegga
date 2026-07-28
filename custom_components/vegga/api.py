@@ -258,16 +258,18 @@ class VeggaApi:
         GET /agronic/api/v1/users/{numeric_user_id}/units
         """
         await self.async_ensure_authenticated()
-        user_id = self._user_id_from_token()
+
+        # The JWT ``sub`` claim is the identity-provider account id (for
+        # example 671), not the Agrónic user id required by this endpoint.
+        # VEGGA obtains the Agrónic id from the authenticated user profile.
+        profile = await self._request_url(
+            "GET", f"{CORE_BASE_URL}/users/{self._username}/auth"
+        )
+        _LOGGER.debug("VEGGA auth profile received: %s", profile)
+        user_id = self._find_user_id(profile)
 
         if not user_id:
-            profile = await self._request_url(
-                "GET", f"{CORE_BASE_URL}/users/{self._username}/auth"
-            )
-            user_id = self._find_user_id(profile)
-
-        if not user_id:
-            raise VeggaApiError("No se pudo obtener el identificador de usuario VEGGA")
+            raise VeggaApiError("No se pudo obtener el identificador de usuario Agrónic")
 
         data = await self._request("GET", f"/users/{user_id}/units")
         units = self._extract_list(

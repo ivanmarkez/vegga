@@ -17,3 +17,7 @@ Integración personalizada para consultar los programas de un controlador Agrón
 Copia `custom_components/vegga` dentro de la carpeta `custom_components` de Home Assistant, reinicia Home Assistant y añade **VEGGA Agrónic** desde Integraciones.
 
 La configuración solicita usuario, contraseña e intervalo de actualización. No requiere pegar manualmente un Bearer Token.
+
+
+## v0.2.4
+Corrige la identificación del usuario Agrónic: ya no usa el claim `sub` del JWT para consultar los controladores.
