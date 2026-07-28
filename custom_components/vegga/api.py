@@ -433,7 +433,7 @@ class VeggaApi:
         *,
         sector: int | None = None,
         grouping: str = "DAY",
-        page_number: int = 0,
+        page_number: int = 1,
         page_size: int = 2000,
     ) -> list[dict[str, Any]]:
         """Return historical irrigation rows for all sectors or one sector."""
@@ -449,6 +449,12 @@ class VeggaApi:
         if sector is not None:
             params["sector"] = sector
         url = f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/history/sectors"
+        self.history_debug = {
+            "url": url,
+            "params": dict(params),
+            "sector_requested": sector,
+            "page_number_requested": page_number,
+        }
         data = await self._request_url("GET", url, params=params)
 
         # Keep a small, token-free diagnostic sample visible in Home Assistant.
@@ -470,11 +476,10 @@ class VeggaApi:
                 return value[:200]
             return value
 
-        self.history_debug = {
-            "sector_requested": sector,
+        self.history_debug.update({
             "top_level_keys": top_keys,
             "response_sample": _sample(data),
-        }
+        })
 
         records = self._extract_history_records(data)
 

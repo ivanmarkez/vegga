@@ -60,41 +60,60 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
 
             if self._history_due(now):
                 try:
-                    # VEGGA's history endpoint expects a concrete sector. A
-                    # request without ``sector`` may return an empty page even
-                    # though the web application shows data. Query every known
-                    # sector and merge the rows. This runs only at the slower
-                    # history interval, not every live-data refresh.
-                    history: list[dict[str, Any]] = []
-                    for fallback, sector_data in enumerate(sectors, start=1):
-                        sector_number = self._sector_number(sector_data, fallback)
-                        sector_rows = await self.api.get_sector_history(
-                            (now - timedelta(days=HISTORY_LOOKBACK_DAYS)).date(),
-                            now.date(),
-                            sector=sector_number,
-                            page_size=HISTORY_PAGE_SIZE,
-                        )
+                    # The VEGGA web application calls this endpoint with
+                    # sector=0 (all sectors) and pageNumber=1. The endpoint is
+                    # 1-based; using page 0 or querying positional sector
+                    # numbers can return an empty result.
+                    history = await self.api.get_sector_history(
+                        (now - timedelta(days=HISTORY_LOOKBACK_DAYS)).date(),
+                        now.date(),
+                        sector=0,
+                        page_number=1,
+                        page_size=HISTORY_PAGE_SIZE,
+                    )
 
-                        # The history query parameter and the ``sectorId`` returned
-                        # inside each row are not the same identifier. Bind every
-                        # returned row to the sector entity that triggered the query.
-                        sector_name = next(
+                    # Bind records to HA sectors by name. The returned sectorId
+                    # is an internal history identifier and is not guaranteed
+                    # to equal the sector position from /units/.../sectors.
+                    sector_names: dict[str, tuple[int, str]] = {}
+                    for fallback, sector_data in enumerate(sectors, start=1):
+                        number = self._sector_number(sector_data, fallback)
+                        name = next(
                             (
                                 str(sector_data.get(key))
                                 for key in ("name", "description", "nombre", "sectorName", "sector_name", "label")
                                 if sector_data.get(key) not in (None, "")
                             ),
-                            f"Sector {sector_number}",
+                            f"Sector {number}",
                         )
-                        for row in sector_rows:
-                            item = dict(row)
-                            item["_ha_sector_number"] = sector_number
-                            item["_ha_sector_name"] = sector_name
-                            history.append(item)
-                    self._history = history
+                        sector_names[name.strip().casefold()] = (number, name)
+
+                    normalized_history: list[dict[str, Any]] = []
+                    for row in history:
+                        item = dict(row)
+                        history_name = next(
+                            (
+                                str(item.get(key))
+                                for key in ("sectorName", "sector_name", "name", "nombre", "description")
+                                if item.get(key) not in (None, "")
+                            ),
+                            "",
+                        )
+                        match = sector_names.get(history_name.strip().casefold())
+                        if match:
+                            item["_ha_sector_number"] = match[0]
+                            item["_ha_sector_name"] = match[1]
+                        normalized_history.append(item)
+
+                    self._history = normalized_history
                     self.last_history_update = now
                 except VeggaApiError as err:
-                    # History is supplementary: never take program/sector control offline.
+                    self.api.history_debug = {
+                        **self.api.history_debug,
+                        "error": str(err),
+                        "request_sector": 0,
+                        "request_page_number": 1,
+                    }
                     _LOGGER.warning("No se pudo actualizar el histórico VEGGA: %s", err)
 
             self.last_successful_update = now
