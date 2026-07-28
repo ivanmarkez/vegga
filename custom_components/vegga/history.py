@@ -24,6 +24,9 @@ class SectorAnalysis:
     deviation_percent: float | None
     last_duration_minutes: float | None
     average_flow_m3h: float | None
+    expected_flow_m3h: float | None
+    actual_flow_m3h: float | None
+    vegga_flow_deviation_percent: float | None
     last_started_at: datetime | None
     last_ended_at: datetime | None
     level: str
@@ -44,6 +47,14 @@ def _first(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
 
 def _number(value: Any) -> float | None:
     if isinstance(value, bool):
+        return None
+    if isinstance(value, dict):
+        # VEGGA wraps measurements as {"value": 2.0, "unit": "CUBIC_METERS"}.
+        for key in ("value", "actual", "expected", "deviation"):
+            if key in value:
+                parsed = _number(value[key])
+                if parsed is not None:
+                    return parsed
         return None
     if isinstance(value, (int, float)):
         return float(value)
@@ -73,6 +84,16 @@ def _datetime(value: Any) -> datetime | None:
 
 
 def _duration_minutes(value: Any) -> float | None:
+    if isinstance(value, dict):
+        number = _number(value.get("value"))
+        unit = str(value.get("unit", "")).upper()
+        if number is None:
+            return None
+        if unit in {"SECONDS", "SECOND"}:
+            return number / 60.0
+        if unit in {"HOURS", "HOUR"}:
+            return number * 60.0
+        return number
     if isinstance(value, (int, float)):
         number = float(value)
         # Most APIs expose seconds; small values are more plausibly minutes.
@@ -138,11 +159,18 @@ def duration_minutes(record: dict[str, Any]) -> float | None:
 
 
 def start_time(record: dict[str, Any]) -> datetime | None:
-    return _datetime(_first(record, ("from", "start", "startDate", "start_date", "startedAt", "started_at", "date", "fecha")))
+    return _datetime(_first(record, ("dateFrom", "date_from", "from", "start", "startDate", "start_date", "startedAt", "started_at", "date", "fecha")))
 
 
 def end_time(record: dict[str, Any]) -> datetime | None:
-    return _datetime(_first(record, ("to", "end", "endDate", "end_date", "endedAt", "ended_at")))
+    return _datetime(_first(record, ("dateTo", "date_to", "to", "end", "endDate", "end_date", "endedAt", "ended_at")))
+
+
+def flow_values(record: dict[str, Any]) -> tuple[float | None, float | None, float | None]:
+    flow = _first(record, ("flow", "caudal"))
+    if not isinstance(flow, dict):
+        return None, None, None
+    return _number(flow.get("expected")), _number(flow.get("actual")), _number(flow.get("deviation"))
 
 
 def analyse_sector(
@@ -156,7 +184,7 @@ def analyse_sector(
     usable = [(record, volume_m3(record)) for record in matching]
     usable = [(record, volume) for record, volume in usable if volume is not None and volume > 0]
     if not usable:
-        return SectorAnalysis(number, name, 0, None, None, None, None, None, None, None, "unknown")
+        return SectorAnalysis(number, name, 0, None, None, None, None, None, None, None, None, None, None, "unknown")
 
     last_record, last_volume = usable[-1]
     previous = [volume for _, volume in usable[:-1]][-BASELINE_SAMPLE_COUNT:]
@@ -172,7 +200,8 @@ def analyse_sector(
         level = "warning"
 
     duration = duration_minutes(last_record)
-    flow = last_volume / (duration / 60.0) if duration and duration > 0 else None
+    calculated_flow = last_volume / (duration / 60.0) if duration and duration > 0 else None
+    expected_flow, actual_flow, vegga_deviation = flow_values(last_record)
     return SectorAnalysis(
         number,
         sector_name(last_record, name),
@@ -181,7 +210,10 @@ def analyse_sector(
         baseline,
         deviation,
         duration,
-        flow,
+        calculated_flow,
+        expected_flow,
+        actual_flow,
+        vegga_deviation,
         start_time(last_record),
         end_time(last_record),
         level,

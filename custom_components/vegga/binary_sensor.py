@@ -13,13 +13,9 @@ from .history import analyse_sector
 
 
 def _sector_number(item: dict[str, Any], fallback: int) -> int:
-    for key in ("number", "sector", "sectorNumber", "sector_number", "index", "code"):
-        value = item.get(key)
-        if isinstance(value, int):
-            return value if value >= 1 else value + 1
-        if isinstance(value, str) and value.strip().isdigit():
-            number = int(value.strip())
-            return number if number >= 1 else number + 1
+    value = item.get("_agronic_number")
+    if isinstance(value, int) and value >= 1:
+        return value
     return fallback
 
 

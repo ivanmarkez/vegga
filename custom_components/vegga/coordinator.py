@@ -40,19 +40,10 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
 
     @staticmethod
     def _sector_number(sector: dict[str, Any], fallback: int) -> int:
-        """Return the Agrónic sector number, never VEGGA's database id.
-
-        The /sectors endpoint can expose an internal ``id`` (for example 30)
-        while the history endpoint expects the controller position (for example 1).
-        When no explicit sector number is present, list order is the reliable mapping.
-        """
-        lowered = {str(key).casefold(): value for key, value in sector.items()}
-        for key in ("number", "sector", "sectornumber", "sector_number", "index", "code"):
-            value = lowered.get(key)
-            if isinstance(value, int):
-                return value
-            if isinstance(value, str) and value.strip().isdigit():
-                return int(value.strip())
+        """Return the controller sector number used by VEGGA history/manual APIs."""
+        value = sector.get("_agronic_number")
+        if isinstance(value, int) and value >= 1:
+            return value
         return fallback
 
     def _history_due(self, now: datetime) -> bool:

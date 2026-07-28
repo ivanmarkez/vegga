@@ -40,13 +40,9 @@ def _is_active(item: dict[str, Any]) -> bool:
 
 
 def _sector_number(item: dict[str, Any], fallback: int) -> int:
-    for key in ("number", "sector", "sectorNumber", "sector_number", "index", "code"):
-        value = item.get(key)
-        if isinstance(value, int):
-            return value if value >= 1 else value + 1
-        if isinstance(value, str) and value.strip().isdigit():
-            number = int(value.strip())
-            return number if number >= 1 else number + 1
+    value = item.get("_agronic_number")
+    if isinstance(value, int) and value >= 1:
+        return value
     return fallback
 
 
@@ -206,6 +202,9 @@ class VeggaSectorConsumptionSensor(VeggaEntity, SensorEntity):
             "sample_count": analysis.sample_count,
             "last_duration_minutes": analysis.last_duration_minutes,
             "average_flow_m3h": analysis.average_flow_m3h,
+            "expected_flow_m3h": analysis.expected_flow_m3h,
+            "actual_flow_m3h": analysis.actual_flow_m3h,
+            "vegga_flow_deviation_percent": analysis.vegga_flow_deviation_percent,
             "last_started_at": analysis.last_started_at,
             "last_ended_at": analysis.last_ended_at,
         }

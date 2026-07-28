@@ -345,7 +345,15 @@ class VeggaApi:
             data, ("sectors", "content", "data", "items", "results", "value")
         )
         if sectors:
-            return sectors
+            # The Agrónic endpoint may expose database identifiers (for example 30)
+            # that are not the controller sector number used by history/manual calls.
+            # VEGGA itself addresses sectors by their position: 1, 2, 3, ...
+            normalized: list[dict[str, Any]] = []
+            for agronic_number, sector_data in enumerate(sectors, start=1):
+                item = dict(sector_data)
+                item["_agronic_number"] = agronic_number
+                normalized.append(item)
+            return normalized
 
         # Do not make the complete integration unavailable when VEGGA changes
         # only the sector response format. Programs continue working and the
@@ -425,7 +433,7 @@ class VeggaApi:
         *,
         sector: int | None = None,
         grouping: str = "DAY",
-        page_number: int = 1,
+        page_number: int = 0,
         page_size: int = 2000,
     ) -> list[dict[str, Any]]:
         """Return historical irrigation rows for all sectors or one sector."""
