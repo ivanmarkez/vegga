@@ -1,0 +1,188 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from statistics import median
+from typing import Any
+
+from .const import (
+    ANOMALY_ALARM_PERCENT,
+    ANOMALY_WARNING_PERCENT,
+    BASELINE_SAMPLE_COUNT,
+    MIN_BASELINE_SAMPLES,
+)
+
+
+@dataclass(frozen=True)
+class SectorAnalysis:
+    sector_number: int
+    sector_name: str
+    sample_count: int
+    last_volume_m3: float | None
+    baseline_volume_m3: float | None
+    deviation_percent: float | None
+    last_duration_minutes: float | None
+    average_flow_m3h: float | None
+    last_started_at: datetime | None
+    last_ended_at: datetime | None
+    level: str
+
+    @property
+    def anomalous(self) -> bool:
+        return self.level in {"warning", "alarm"}
+
+
+def _first(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    lowered = {str(k).casefold(): v for k, v in item.items()}
+    for key in keys:
+        value = lowered.get(key.casefold())
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = re.search(r"[-+]?\d+(?:[.,]\d+)?", value.replace(" ", ""))
+        if match:
+            try:
+                return float(match.group(0).replace(",", "."))
+            except ValueError:
+                pass
+    return None
+
+
+def _datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    for candidate in (text, text.replace(" ", "T")):
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _duration_minutes(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        number = float(value)
+        # Most APIs expose seconds; small values are more plausibly minutes.
+        return number / 60.0 if number > 300 else number
+    if not isinstance(value, str):
+        return None
+    text = value.casefold().replace(" ", "")
+    hours = re.search(r"(\d+(?:[.,]\d+)?)h", text)
+    minutes = re.search(r"(\d+(?:[.,]\d+)?)min", text)
+    seconds = re.search(r"(\d+(?:[.,]\d+)?)s", text)
+    if hours or minutes or seconds:
+        return (
+            (_number(hours.group(1)) or 0) * 60
+            + (_number(minutes.group(1)) or 0)
+            + (_number(seconds.group(1)) or 0) / 60
+        )
+    if ":" in text:
+        parts = text.split(":")
+        try:
+            if len(parts) == 3:
+                h, m, s = map(float, parts)
+                return h * 60 + m + s / 60
+            if len(parts) == 2:
+                m, s = map(float, parts)
+                return m + s / 60
+        except ValueError:
+            return None
+    return _number(text)
+
+
+def sector_number(record: dict[str, Any]) -> int | None:
+    value = _first(record, ("sector", "sectorId", "sector_id", "sectorNumber", "sector_number", "number"))
+    number = _number(value)
+    return int(number) if number is not None else None
+
+
+def sector_name(record: dict[str, Any], fallback: str) -> str:
+    value = _first(record, ("sectorName", "sector_name", "name", "nombre", "description"))
+    return str(value) if value not in (None, "") else fallback
+
+
+def volume_m3(record: dict[str, Any]) -> float | None:
+    value = _first(record, (
+        "volume", "volumen", "waterVolume", "water_volume", "irrigationVolume",
+        "irrigation_volume", "totalVolume", "total_volume", "m3",
+    ))
+    number = _number(value)
+    if number is None:
+        return None
+    # Explicit litre fields are converted; ordinary volume fields are assumed m³.
+    keys = {str(k).casefold() for k in record}
+    if keys & {"liters", "litres", "litros", "volume_liters", "volume_litres"}:
+        return number / 1000.0
+    return number
+
+
+def duration_minutes(record: dict[str, Any]) -> float | None:
+    value = _first(record, (
+        "irrigationTime", "irrigation_time", "duration", "durationSeconds",
+        "duration_seconds", "time", "tiempo", "wateringTime", "watering_time",
+    ))
+    return _duration_minutes(value)
+
+
+def start_time(record: dict[str, Any]) -> datetime | None:
+    return _datetime(_first(record, ("from", "start", "startDate", "start_date", "startedAt", "started_at", "date", "fecha")))
+
+
+def end_time(record: dict[str, Any]) -> datetime | None:
+    return _datetime(_first(record, ("to", "end", "endDate", "end_date", "endedAt", "ended_at")))
+
+
+def analyse_sector(
+    records: list[dict[str, Any]],
+    number: int,
+    name: str,
+) -> SectorAnalysis:
+    matching = [record for record in records if sector_number(record) == number]
+    matching.sort(key=lambda item: start_time(item) or end_time(item) or datetime.min.replace(tzinfo=timezone.utc))
+
+    usable = [(record, volume_m3(record)) for record in matching]
+    usable = [(record, volume) for record, volume in usable if volume is not None and volume > 0]
+    if not usable:
+        return SectorAnalysis(number, name, 0, None, None, None, None, None, None, None, "unknown")
+
+    last_record, last_volume = usable[-1]
+    previous = [volume for _, volume in usable[:-1]][-BASELINE_SAMPLE_COUNT:]
+    baseline = median(previous) if len(previous) >= MIN_BASELINE_SAMPLES else None
+    deviation = ((last_volume - baseline) / baseline * 100.0) if baseline and baseline > 0 else None
+
+    level = "normal"
+    if deviation is None:
+        level = "learning"
+    elif abs(deviation) >= ANOMALY_ALARM_PERCENT:
+        level = "alarm"
+    elif abs(deviation) >= ANOMALY_WARNING_PERCENT:
+        level = "warning"
+
+    duration = duration_minutes(last_record)
+    flow = last_volume / (duration / 60.0) if duration and duration > 0 else None
+    return SectorAnalysis(
+        number,
+        sector_name(last_record, name),
+        len(usable),
+        last_volume,
+        baseline,
+        deviation,
+        duration,
+        flow,
+        start_time(last_record),
+        end_time(last_record),
+        level,
+    )

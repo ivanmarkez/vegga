@@ -9,6 +9,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .entity import VeggaEntity
+from .history import analyse_sector
 
 
 def _sector_number(item: dict[str, Any], fallback: int) -> int:
@@ -52,20 +53,17 @@ async def async_setup_entry(
     entities: list[BinarySensorEntity] = [VeggaCloudConnectionBinarySensor(coordinator)]
 
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
-        entities.append(
-            VeggaSectorBinarySensor(
-                coordinator,
-                _sector_number(sector, fallback),
-                _sector_name(sector, fallback),
-            )
-        )
+        number = _sector_number(sector, fallback)
+        name = _sector_name(sector, fallback)
+        entities.extend([
+            VeggaSectorBinarySensor(coordinator, number, name),
+            VeggaSectorConsumptionAnomalyBinarySensor(coordinator, number, name),
+        ])
 
     async_add_entities(entities)
 
 
 class VeggaCloudConnectionBinarySensor(VeggaEntity, BinarySensorEntity):
-    """Whether the last VEGGA cloud update succeeded."""
-
     _attr_name = "Conexión VEGGA"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
 
@@ -79,8 +77,6 @@ class VeggaCloudConnectionBinarySensor(VeggaEntity, BinarySensorEntity):
 
 
 class VeggaSectorBinarySensor(VeggaEntity, BinarySensorEntity):
-    """Current state of one irrigation sector."""
-
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:sprinkler-variant"
 
@@ -105,3 +101,48 @@ class VeggaSectorBinarySensor(VeggaEntity, BinarySensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         sector = self._sector()
         return {"sector_number": self._number, "vegga_data": sector or {}}
+
+
+class VeggaSectorConsumptionAnomalyBinarySensor(VeggaEntity, BinarySensorEntity):
+    """Flags a sector whose latest volume differs materially from its baseline."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:water-alert"
+
+    def __init__(self, coordinator, sector_number: int, sector_name: str) -> None:
+        super().__init__(coordinator)
+        self._number = sector_number
+        self._sector_name = sector_name
+        self._attr_name = f"Consumo anómalo {sector_name}"
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{sector_number}_consumption_anomaly"
+
+    def _analysis(self):
+        return analyse_sector((self.coordinator.data or {}).get("history", []), self._number, self._sector_name)
+
+    @property
+    def is_on(self) -> bool:
+        return self._analysis().anomalous
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._analysis().level != "unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analysis = self._analysis()
+        return {
+            "sector_number": analysis.sector_number,
+            "sector_name": analysis.sector_name,
+            "level": analysis.level,
+            "deviation_percent": analysis.deviation_percent,
+            "last_volume_m3": analysis.last_volume_m3,
+            "baseline_volume_m3": analysis.baseline_volume_m3,
+            "sample_count": analysis.sample_count,
+            "possible_cause": (
+                "Posible fuga o caudal superior al habitual"
+                if analysis.deviation_percent is not None and analysis.deviation_percent > 0
+                else "Posible falta de presión, obstrucción o válvula parcialmente abierta"
+                if analysis.deviation_percent is not None
+                else "Aprendiendo el consumo habitual del sector"
+            ),
+        }

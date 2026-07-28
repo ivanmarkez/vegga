@@ -1,21 +1,22 @@
-# VEGGA Agrónic para Home Assistant — v0.3.0
+# VEGGA Agrónic para Home Assistant — v0.4.0
 
 Integración no oficial para Agrónic A-5500 mediante VEGGA.
 
 ## Incluye
-- Login automático con usuario y contraseña.
-- Renovación automática de sesión.
-- Botones **Iniciar** y **Parar** para cada programa.
-- Sensor de número de programas.
-- Sensor de programas activos (detección compatible con varios formatos de estado).
-- Sensor de última orden enviada desde Home Assistant.
-- Sensor de última actualización correcta.
-- Sensor binario de conexión con VEGGA.
+- Login automático y renovación de sesión.
+- Programas y sectores con controles de inicio/parada.
+- Estado de conexión, programas y sectores activos.
+- Histórico de riego por sectores desde VEGGA.
+- Sensor de último volumen por sector.
+- Media robusta de hasta 20 registros anteriores por sector.
+- Desviación porcentual, duración y caudal medio en atributos.
+- Sensor binario de consumo anómalo por sector.
+- Contador global de sectores con anomalías.
 
-> El ID del Agrónic se introduce manualmente mientras se termina de documentar el endpoint interno de descubrimiento de equipos.
+El histórico se actualiza cada 30 minutos y analiza los últimos 60 días. El control en tiempo real mantiene el intervalo configurado en Home Assistant.
 
-
-## 0.3.1
-- Lectura de sectores desde `/units/{device_id}/sectors`.
-- Botones de iniciar/parar sector (acciones 9/8 confirmadas en HAR).
-- Sensores de sectores y sectores activos.
+### Umbrales iniciales
+- Normal: desviación menor del 15 %.
+- Advertencia: 15–25 %.
+- Alarma: 25 % o más.
+- Se necesitan al menos 5 registros previos para establecer una referencia.

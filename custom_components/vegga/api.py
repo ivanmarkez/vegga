@@ -4,12 +4,12 @@ import asyncio
 import base64
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from aiohttp import ClientError, ClientResponseError, ClientSession
 
-from .const import API_BASE_URL, CLIENT_ID, CORE_BASE_URL, LOGIN_URL, OAUTH_SCOPE
+from .const import API_BASE_URL, CLIENT_ID, CORE_BASE_URL, HISTORY_BASE_URL, LOGIN_URL, OAUTH_SCOPE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -148,6 +148,7 @@ class VeggaApi:
         url: str,
         *,
         json_data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         retry_auth: bool = True,
     ) -> Any:
         await self.async_ensure_authenticated()
@@ -158,7 +159,8 @@ class VeggaApi:
                 url,
                 headers=self.headers,
                 json=json_data,
-                timeout=20,
+                params=params,
+                timeout=30,
             ) as response:
                 _LOGGER.debug("VEGGA API response %s %s -> HTTP %s", method, url, response.status)
                 if response.status in (401, 403):
@@ -168,6 +170,7 @@ class VeggaApi:
                             method,
                             url,
                             json_data=json_data,
+                            params=params,
                             retry_auth=False,
                         )
                     raise VeggaAuthError("La sesión de VEGGA ha caducado")
@@ -349,6 +352,89 @@ class VeggaApi:
         shape = list(data.keys()) if isinstance(data, dict) else type(data).__name__
         _LOGGER.warning("VEGGA returned no parseable sectors; response shape=%s", shape)
         return []
+
+
+    @staticmethod
+    def _looks_like_history_record(item: dict[str, Any]) -> bool:
+        keys = {str(key).casefold() for key in item}
+        has_sector = bool(keys & {
+            "sector", "sectorid", "sector_id", "sectornumber", "sector_number",
+            "sectorname", "sector_name", "name", "nombre"
+        })
+        has_measurement = bool(keys & {
+            "volume", "volumen", "water", "watervolume", "irrigationvolume",
+            "time", "tiempo", "duration", "durationseconds", "irrigationtime",
+            "from", "to", "start", "end", "startdate", "enddate",
+            "date", "fecha"
+        })
+        return has_sector and has_measurement
+
+    @staticmethod
+    def _extract_history_records(data: Any) -> list[dict[str, Any]]:
+        """Recursively locate sector-history rows without depending on one wrapper."""
+        found: list[dict[str, Any]] = []
+
+        def walk(value: Any) -> None:
+            if isinstance(value, list):
+                dict_items = [item for item in value if isinstance(item, dict)]
+                record_items = [item for item in dict_items if VeggaApi._looks_like_history_record(item)]
+                if record_items:
+                    found.extend(record_items)
+                    return
+                for item in value:
+                    walk(item)
+                return
+            if isinstance(value, dict):
+                if VeggaApi._looks_like_history_record(value):
+                    found.append(value)
+                    return
+                for key in ("content", "data", "items", "results", "records", "history", "values", "rows"):
+                    if key in value:
+                        walk(value[key])
+                if not found:
+                    for child in value.values():
+                        walk(child)
+
+        walk(data)
+        # Remove duplicate rows that may have been reached through wrapper aliases.
+        unique: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in found:
+            marker = json.dumps(item, sort_keys=True, default=str)
+            if marker not in seen:
+                seen.add(marker)
+                unique.append(item)
+        return unique
+
+    async def get_sector_history(
+        self,
+        from_date: date,
+        to_date: date,
+        *,
+        sector: int | None = None,
+        grouping: str = "DAY",
+        page_number: int = 1,
+        page_size: int = 2000,
+    ) -> list[dict[str, Any]]:
+        """Return historical irrigation rows for all sectors or one sector."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        params: dict[str, Any] = {
+            "from": from_date.isoformat(),
+            "to": to_date.isoformat(),
+            "grouping": grouping,
+            "pageNumber": page_number,
+            "pageSize": page_size,
+        }
+        if sector is not None:
+            params["sector"] = sector
+        url = f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/history/sectors"
+        data = await self._request_url("GET", url, params=params)
+        records = self._extract_history_records(data)
+        if not records:
+            shape = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+            _LOGGER.warning("VEGGA returned no parseable sector history; response shape=%s", shape)
+        return records
 
     async def manual_action(self, action: int, parameter1: int) -> Any:
         if not self.device_id:
