@@ -1,33 +1,19 @@
 # VEGGA Agrónic para Home Assistant
 
-Integración no oficial para controlar equipos Agrónic mediante VEGGA.
+Integración personalizada para consultar los programas de un controlador Agrónic mediante VEGGA y lanzar las órdenes manuales de inicio y parada.
 
-## Estado inicial
+## Versión 0.2.1
 
-- Lectura de programas.
-- Botones para iniciar programas.
-- Botones para detener programas.
-- Configuración desde la interfaz de Home Assistant.
-- Token Bearer manual.
+- Inicio de sesión automático con usuario y contraseña VEGGA.
+- Gestión automática del `access_token`.
+- Intento de renovación con `refresh_token`, con nuevo inicio de sesión como respaldo.
+- Descubrimiento de controladores mediante los endpoints observados en VEGGA:
+  - `/core-service/users/{usuario}/auth`
+  - `/agronic/api/v1/users/{id_usuario}/units`
+- Selección automática si la cuenta solo tiene un controlador.
 
-## Instalación mediante HACS
+## Instalación
 
-1. Publica este contenido en un repositorio de GitHub.
-2. En HACS, abre **Integraciones**.
-3. Pulsa el menú de tres puntos.
-4. Entra en **Repositorios personalizados**.
-5. Añade la URL del repositorio como categoría **Integración**.
-6. Instala **VEGGA Agrónic**.
-7. Reinicia Home Assistant.
-8. Añade la integración desde **Ajustes > Dispositivos y servicios**.
+Copia `custom_components/vegga` dentro de la carpeta `custom_components` de Home Assistant, reinicia Home Assistant y añade **VEGGA Agrónic** desde Integraciones.
 
-## Datos actuales
-
-- Endpoint manual: `/agronic/api/v1/units/{device_id}/manual`
-- Iniciar programa: `action = 4`
-- Detener programa: `action = 5`
-- `parameter1 = número del programa - 1`
-
-## Aviso
-
-Esta integración es experimental y no oficial.
+La configuración solicita usuario, contraseña e intervalo de actualización. No requiere pegar manualmente un Bearer Token.

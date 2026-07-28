@@ -1,23 +1,30 @@
 {
-  "title": "VEGGA Agrónic",
   "config": {
     "step": {
       "user": {
         "title": "Conectar con VEGGA",
-        "description": "Introduce el ID del Agrónic y un token Bearer válido de VEGGA.",
+        "description": "Introduce las credenciales de tu cuenta VEGGA. La integración buscará automáticamente los controladores asociados.",
         "data": {
-          "device_id": "ID del equipo",
-          "token": "Token Bearer",
+          "username": "Usuario VEGGA",
+          "password": "Contraseña VEGGA",
           "scan_interval": "Intervalo de actualización (segundos)"
+        }
+      },
+      "device": {
+        "title": "Seleccionar controlador",
+        "description": "Selecciona el Agrónic que quieres añadir.",
+        "data": {
+          "device_id": "Controlador"
         }
       }
     },
     "error": {
-      "cannot_connect": "No se ha podido conectar con VEGGA",
-      "invalid_auth": "El token no es válido o ha caducado"
+      "cannot_connect": "No se pudo conectar con VEGGA o localizar los controladores.",
+      "invalid_auth": "Usuario o contraseña incorrectos.",
+      "no_devices": "No se encontraron controladores en esta cuenta."
     },
     "abort": {
-      "already_configured": "Este Agrónic ya está configurado"
+      "already_configured": "Este controlador ya está configurado."
     }
   }
 }
