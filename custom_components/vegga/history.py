@@ -125,13 +125,13 @@ def _duration_minutes(value: Any) -> float | None:
 
 
 def sector_number(record: dict[str, Any]) -> int | None:
-    value = _first(record, ("sector", "sectorId", "sector_id", "sectorNumber", "sector_number", "number"))
+    value = _first(record, ("_ha_sector_number", "sector", "sectorId", "sector_id", "sectorNumber", "sector_number", "number"))
     number = _number(value)
     return int(number) if number is not None else None
 
 
 def sector_name(record: dict[str, Any], fallback: str) -> str:
-    value = _first(record, ("sectorName", "sector_name", "name", "nombre", "description"))
+    value = _first(record, ("_ha_sector_name", "sectorName", "sector_name", "name", "nombre", "description"))
     return str(value) if value not in (None, "") else fallback
 
 

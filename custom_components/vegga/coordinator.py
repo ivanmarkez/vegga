@@ -74,7 +74,23 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                             sector=sector_number,
                             page_size=HISTORY_PAGE_SIZE,
                         )
-                        history.extend(sector_rows)
+
+                        # The history query parameter and the ``sectorId`` returned
+                        # inside each row are not the same identifier. Bind every
+                        # returned row to the sector entity that triggered the query.
+                        sector_name = next(
+                            (
+                                str(sector_data.get(key))
+                                for key in ("name", "description", "nombre", "sectorName", "sector_name", "label")
+                                if sector_data.get(key) not in (None, "")
+                            ),
+                            f"Sector {sector_number}",
+                        )
+                        for row in sector_rows:
+                            item = dict(row)
+                            item["_ha_sector_number"] = sector_number
+                            item["_ha_sector_name"] = sector_name
+                            history.append(item)
                     self._history = history
                     self.last_history_update = now
                 except VeggaApiError as err:
