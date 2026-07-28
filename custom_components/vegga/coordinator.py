@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -41,12 +39,6 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self._history: list[dict[str, Any]] = []
 
     @staticmethod
-    def _normalize_name(value: Any) -> str:
-        text = unicodedata.normalize("NFKD", str(value or ""))
-        text = "".join(char for char in text if not unicodedata.combining(char))
-        return re.sub(r"[^a-z0-9]+", "", text.casefold())
-
-    @staticmethod
     def _sector_number(sector: dict[str, Any], fallback: int) -> int:
         """Return the controller sector number used by VEGGA history/manual APIs."""
         value = sector.get("_agronic_number")
@@ -67,62 +59,52 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             now = datetime.now(timezone.utc)
 
             if self._history_due(now):
-                try:
-                    # The VEGGA web application calls this endpoint with
-                    # sector=0 (all sectors) and pageNumber=1. The endpoint is
-                    # 1-based; using page 0 or querying positional sector
-                    # numbers can return an empty result.
-                    history = await self.api.get_sector_history(
-                        (now - timedelta(days=HISTORY_LOOKBACK_DAYS)).date(),
-                        now.date(),
-                        sector=0,
-                        page_number=1,
-                        page_size=HISTORY_PAGE_SIZE,
+                all_history: list[dict[str, Any]] = []
+                diagnostics: list[dict[str, Any]] = []
+                from_date = (now - timedelta(days=HISTORY_LOOKBACK_DAYS)).date()
+                to_date = now.date()
+
+                # VEGGA history expects the controller sector number (1..N),
+                # pageNumber=0 and the normal web page size (20). sector=0
+                # produces HTTP 500 on this controller.
+                for fallback, sector_data in enumerate(sectors, start=1):
+                    number = self._sector_number(sector_data, fallback)
+                    name = next(
+                        (
+                            str(sector_data.get(key))
+                            for key in ("name", "description", "nombre", "sectorName", "sector_name", "label")
+                            if sector_data.get(key) not in (None, "")
+                        ),
+                        f"Sector {number}",
                     )
-
-                    # Bind records to HA sectors by name. The returned sectorId
-                    # is an internal history identifier and is not guaranteed
-                    # to equal the sector position from /units/.../sectors.
-                    sector_names: dict[str, tuple[int, str]] = {}
-                    for fallback, sector_data in enumerate(sectors, start=1):
-                        number = self._sector_number(sector_data, fallback)
-                        name = next(
-                            (
-                                str(sector_data.get(key))
-                                for key in ("name", "description", "nombre", "sectorName", "sector_name", "label")
-                                if sector_data.get(key) not in (None, "")
-                            ),
-                            f"Sector {number}",
+                    try:
+                        rows = await self.api.get_sector_history(
+                            from_date,
+                            to_date,
+                            sector=number,
+                            page_number=0,
+                            page_size=20,
                         )
-                        sector_names[self._normalize_name(name)] = (number, name)
+                    except VeggaApiError as err:
+                        diagnostics.append({"sector": number, "name": name, "error": str(err)})
+                        continue
 
-                    normalized_history: list[dict[str, Any]] = []
-                    for row in history:
+                    for row in rows:
                         item = dict(row)
-                        history_name = next(
-                            (
-                                str(item.get(key))
-                                for key in ("sectorName", "sector_name", "name", "nombre", "description")
-                                if item.get(key) not in (None, "")
-                            ),
-                            "",
-                        )
-                        match = sector_names.get(self._normalize_name(history_name))
-                        if match:
-                            item["_ha_sector_number"] = match[0]
-                            item["_ha_sector_name"] = match[1]
-                        normalized_history.append(item)
+                        item["_ha_sector_number"] = number
+                        item["_ha_sector_name"] = name
+                        all_history.append(item)
+                    diagnostics.append({"sector": number, "name": name, "records": len(rows)})
 
-                    self._history = normalized_history
-                    self.last_history_update = now
-                except VeggaApiError as err:
-                    self.api.history_debug = {
-                        **self.api.history_debug,
-                        "error": str(err),
-                        "request_sector": 0,
-                        "request_page_number": 1,
-                    }
-                    _LOGGER.warning("No se pudo actualizar el histórico VEGGA: %s", err)
+                self._history = all_history
+                self.last_history_update = now
+                self.api.history_debug = {
+                    "mode": "per_sector_page_0",
+                    "page_size": 20,
+                    "sectors_checked": len(sectors),
+                    "records": len(all_history),
+                    "sector_results": diagnostics[:50],
+                }
 
             self.last_successful_update = now
             return {"programs": programs, "sectors": sectors, "history": self._history, "history_debug": dict(self.api.history_debug)}
