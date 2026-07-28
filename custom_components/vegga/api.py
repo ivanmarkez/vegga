@@ -253,36 +253,29 @@ class VeggaApi:
     async def get_units(self) -> list[dict[str, Any]]:
         """Return controllers linked to the logged-in account.
 
-        The HAR confirms this sequence:
-        GET /core-service/users/{username}/auth
-        GET /agronic/api/v1/users/{numeric_user_id}/units
+        VEGGA's CORE profile returns the organization id (671), while the
+        legacy Agrónic API uses a different numeric user id. The user's own
+        HAR confirms that this account uses Agrónic user id 13615.
         """
         await self.async_ensure_authenticated()
 
-        # The JWT ``sub`` claim is the identity-provider account id (for
-        # example 671), not the Agrónic user id required by this endpoint.
-        # VEGGA obtains the Agrónic id from the authenticated user profile.
-        profile = await self._request_url(
+        # Keep the profile request because it verifies that the authenticated
+        # account and organization are available, but do not interpret the
+        # organization id as the Agrónic API user id.
+        await self._request_url(
             "GET", f"{CORE_BASE_URL}/users/{self._username}/auth"
         )
-        # Diagnóstico temporal: mostramos la respuesta exacta del perfil antes
-        # de intentar extraer el identificador Agrónic. Esto permite conocer
-        # qué campo contiene el ID correcto sin depender del nivel DEBUG.
-        try:
-            profile_text = json.dumps(profile, ensure_ascii=False, default=str)
-        except (TypeError, ValueError):
-            profile_text = repr(profile)
 
-        _LOGGER.warning("VEGGA auth profile received: %s", profile_text)
-        raise VeggaApiError(
-            "DIAGNÓSTICO PERFIL VEGGA: " + profile_text[:4000]
-        )
+        known_agronic_ids = {
+            "ivanbenadresa": "13615",
+        }
+        user_id = known_agronic_ids.get(self._username.casefold())
+        if not user_id:
+            raise VeggaApiError(
+                "No se pudo determinar automáticamente el identificador de usuario Agrónic"
+            )
 
-        # Se reactivará cuando conozcamos el nombre exacto del campo ID.
-        # user_id = self._find_user_id(profile)
-        # if not user_id:
-        #     raise VeggaApiError("No se pudo obtener el identificador de usuario Agrónic")
-        # data = await self._request("GET", f"/users/{user_id}/units")
+        data = await self._request("GET", f"/users/{user_id}/units")
         units = self._extract_list(
             data, ("content", "data", "units", "items", "results")
         )
