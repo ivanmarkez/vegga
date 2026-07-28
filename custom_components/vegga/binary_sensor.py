@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import VeggaEntity
+from .entity import VeggaEntity, VeggaSectorEntity
 from .history import analyse_sector
 
 
@@ -72,14 +72,14 @@ class VeggaCloudConnectionBinarySensor(VeggaEntity, BinarySensorEntity):
         return self.coordinator.last_update_success
 
 
-class VeggaSectorBinarySensor(VeggaEntity, BinarySensorEntity):
+class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:sprinkler-variant"
 
     def __init__(self, coordinator, sector_number: int, sector_name: str) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, sector_number, sector_name)
         self._number = sector_number
-        self._attr_name = f"Sector {sector_name}"
+        self._attr_name = "Riego activo"
         self._attr_unique_id = f"{coordinator.api.device_id}_sector_{sector_number}_state"
 
     def _sector(self) -> dict[str, Any] | None:
@@ -99,17 +99,17 @@ class VeggaSectorBinarySensor(VeggaEntity, BinarySensorEntity):
         return {"sector_number": self._number, "vegga_data": sector or {}}
 
 
-class VeggaSectorConsumptionAnomalyBinarySensor(VeggaEntity, BinarySensorEntity):
+class VeggaSectorConsumptionAnomalyBinarySensor(VeggaSectorEntity, BinarySensorEntity):
     """Flags a sector whose latest volume differs materially from its baseline."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:water-alert"
 
     def __init__(self, coordinator, sector_number: int, sector_name: str) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, sector_number, sector_name)
         self._number = sector_number
         self._sector_name = sector_name
-        self._attr_name = f"Consumo anómalo {sector_name}"
+        self._attr_name = "Consumo anómalo"
         self._attr_unique_id = f"{coordinator.api.device_id}_sector_{sector_number}_consumption_anomaly"
 
     def _analysis(self):

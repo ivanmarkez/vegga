@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import VeggaEntity
+from .entity import VeggaEntity, VeggaSectorEntity
 from .history import analyse_sector
 
 
@@ -165,7 +165,7 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
         return {"active_sector_names": self._active_names()}
 
 
-class VeggaSectorConsumptionSensor(VeggaEntity, SensorEntity):
+class VeggaSectorConsumptionSensor(VeggaSectorEntity, SensorEntity):
     """Last consumption and automatic baseline comparison for one sector."""
 
     _attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
@@ -173,10 +173,10 @@ class VeggaSectorConsumptionSensor(VeggaEntity, SensorEntity):
     _attr_icon = "mdi:chart-bell-curve-cumulative"
 
     def __init__(self, coordinator, number: int, name: str) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, number, name)
         self._number = number
         self._sector_name = name
-        self._attr_name = f"Consumo {name}"
+        self._attr_name = "Consumo último riego"
         self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_consumption_analysis"
 
     def _analysis(self):

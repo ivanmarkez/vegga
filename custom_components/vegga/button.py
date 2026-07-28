@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import VeggaEntity
+from .entity import VeggaEntity, VeggaSectorEntity
 
 
 def _number(item: dict[str, Any], fallback: int, keys: tuple[str, ...]) -> int:
@@ -66,12 +66,12 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
         await self.coordinator.async_request_refresh()
 
 
-class VeggaSectorButton(VeggaEntity, ButtonEntity):
+class VeggaSectorButton(VeggaSectorEntity, ButtonEntity):
     def __init__(self, coordinator, sector_number: int, sector_name: str, start: bool) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, sector_number, sector_name)
         self._number, self._item_name, self._start = sector_number, sector_name, start
         operation = "start" if start else "stop"
-        self._attr_name = f"{'Iniciar' if start else 'Parar'} sector {sector_name}"
+        self._attr_name = "Iniciar riego" if start else "Parar riego"
         self._attr_unique_id = f"{coordinator.api.device_id}_sector_{sector_number}_{operation}"
         self._attr_icon = "mdi:water" if start else "mdi:water-off"
 
