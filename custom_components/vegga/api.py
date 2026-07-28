@@ -411,6 +411,24 @@ class VeggaApi:
                 return found
         return []
 
+
+    async def get_irrigating_sectors(self) -> list[dict[str, Any]]:
+        """Return sectors currently irrigating, including runtime fields.
+
+        This is the exact request used by the VEGGA web application:
+        GET /units/{device}/sectors?irrigation=true
+        """
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request_url(
+            "GET",
+            f"{API_BASE_URL}/units/{self.device_id}/sectors",
+            params={"irrigation": "true"},
+        )
+        return self._extract_nested_list(
+            data, ("sectors", "content", "data", "items", "results", "value")
+        )
+
     async def get_sectors(self) -> list[dict[str, Any]]:
         """Return irrigation sectors configured in the controller."""
         if not self.device_id:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 import unicodedata
@@ -40,7 +39,6 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self.last_command: str | None = None
         self.last_command_at: datetime | None = None
         self._history: list[dict[str, Any]] = []
-        self._live_payload_logged = False
 
     @staticmethod
     def _normalize_name(value: Any) -> str:
@@ -62,78 +60,66 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             or now - self.last_history_update >= timedelta(minutes=HISTORY_REFRESH_MINUTES)
         )
 
-    @staticmethod
-    def _runtime_matches(payload: Any, path: str = "$") -> list[dict[str, Any]]:
-        """Return compact matches for fields likely to expose live runtime state."""
-        keywords = (
-            "active", "running", "run", "status", "state", "value", "output",
-            "program", "prog", "sector", "remaining", "remain", "timeleft",
-            "manual", "irrig", "operative", "working", "started", "xstatus",
-        )
-        matches: list[dict[str, Any]] = []
+    @classmethod
+    def _merge_live_sectors(
+        cls, configured: list[dict[str, Any]], live: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Merge live runtime fields into configured sectors."""
+        result = [dict(item) for item in configured]
+        by_pk: dict[str, int] = {}
+        by_name: dict[str, int] = {}
+        for index, item in enumerate(result):
+            pk = item.get("pk")
+            if isinstance(pk, dict) and pk.get("id") is not None:
+                by_pk[str(pk["id"])] = index
+            for key in ("id", "sectorId", "sector_id"):
+                if item.get(key) is not None:
+                    by_pk[str(item[key])] = index
+            for key in ("name", "description", "nombre", "sectorName", "sector_name"):
+                if item.get(key):
+                    by_name[cls._normalize_name(item[key])] = index
+                    break
 
-        def walk(value: Any, current: str, depth: int) -> None:
-            if depth > 9 or len(matches) >= 250:
-                return
-            if isinstance(value, dict):
-                for key, child in value.items():
-                    child_path = f"{current}.{key}"
-                    normalized = str(key).casefold().replace("_", "")
-                    if any(word in normalized for word in keywords):
-                        if isinstance(child, (str, int, float, bool)) or child is None:
-                            matches.append({"path": child_path, "value": child})
-                        elif isinstance(child, list):
-                            matches.append({"path": child_path, "type": "list", "length": len(child)})
-                        elif isinstance(child, dict):
-                            matches.append({"path": child_path, "type": "object", "keys": list(child)[:20]})
-                    walk(child, child_path, depth + 1)
-            elif isinstance(value, list):
-                for index, child in enumerate(value[:100]):
-                    walk(child, f"{current}[{index}]", depth + 1)
-
-        walk(payload, path, 0)
-        return matches
-
-    @staticmethod
-    def _diagnostic_json(payload: Any, limit: int = 18000) -> str:
-        try:
-            text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
-        except (TypeError, ValueError):
-            text = repr(payload)
-        if len(text) > limit:
-            return text[:limit] + f"\n... [TRUNCADO: {len(text) - limit} caracteres restantes]"
-        return text
+        for position, runtime in enumerate(live, start=1):
+            target: int | None = None
+            pk = runtime.get("pk")
+            candidates: list[Any] = []
+            if isinstance(pk, dict):
+                candidates.append(pk.get("id"))
+            candidates.extend(runtime.get(key) for key in ("id", "sectorId", "sector_id"))
+            for candidate in candidates:
+                if candidate is not None and str(candidate) in by_pk:
+                    target = by_pk[str(candidate)]
+                    break
+            if target is None:
+                for key in ("name", "description", "nombre", "sectorName", "sector_name"):
+                    if runtime.get(key):
+                        target = by_name.get(cls._normalize_name(runtime[key]))
+                        if target is not None:
+                            break
+            if target is None and 1 <= position <= len(result):
+                # Last-resort positional fallback, used only when VEGGA omits IDs.
+                target = position - 1
+            if target is not None:
+                merged = dict(result[target])
+                merged.update(runtime)
+                merged["_agronic_number"] = result[target].get("_agronic_number", target + 1)
+                merged["_vegga_irrigating"] = True
+                result[target] = merged
+        return result
 
     async def _async_update_data(self) -> dict[str, list[dict[str, Any]]]:
         try:
             programs = await self.api.get_programs()
-            sectors = await self.api.get_sectors()
+            configured_sectors = await self.api.get_sectors()
+            try:
+                active_sectors = await self.api.get_irrigating_sectors()
+            except VeggaApiError as err:
+                _LOGGER.warning("No se pudo obtener el estado de riego en tiempo real: %s", err)
+                active_sectors = []
+            sectors = self._merge_live_sectors(configured_sectors, active_sectors)
             unit_status = await self.api.get_unit_status()
             now = datetime.now(timezone.utc)
-
-            # Temporary runtime endpoint probe. It runs once after each Home
-            # Assistant restart and never blocks the normal integration update.
-            if not self._live_payload_logged:
-                try:
-                    diagnostic = await self.api.get_runtime_diagnostic_candidates()
-                except Exception as err:  # Defensive: diagnostics must never break HA.
-                    diagnostic = {"DIAGNOSTIC_GLOBAL_ERROR": repr(err)}
-
-                _LOGGER.warning(
-                    "VEGGA DIAGNÓSTICO RUNTIME ÍNDICE dispositivo=%s endpoints=%s",
-                    self.api.device_id,
-                    list(diagnostic),
-                )
-                for label, payload in diagnostic.items():
-                    matches = self._runtime_matches(payload)
-                    _LOGGER.warning(
-                        "VEGGA DIAGNÓSTICO RUNTIME %s dispositivo=%s\nCOINCIDENCIAS=%s\nRESPUESTA=%s",
-                        label,
-                        self.api.device_id,
-                        self._diagnostic_json(matches, limit=12000),
-                        self._diagnostic_json(payload, limit=18000),
-                    )
-                self._live_payload_logged = True
 
             if self._history_due(now):
                 try:
@@ -254,7 +240,14 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                     _LOGGER.warning("No se pudo actualizar el histórico VEGGA: %s", err)
 
             self.last_successful_update = now
-            return {"programs": programs, "sectors": sectors, "unit_status": unit_status, "history": self._history, "history_debug": dict(self.api.history_debug)}
+            return {
+                "programs": programs,
+                "sectors": sectors,
+                "active_sectors": active_sectors,
+                "unit_status": unit_status,
+                "history": self._history,
+                "history_debug": dict(self.api.history_debug),
+            }
         except VeggaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except VeggaApiError as err:

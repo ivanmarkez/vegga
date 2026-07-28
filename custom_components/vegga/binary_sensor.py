@@ -115,12 +115,8 @@ class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        data = self.coordinator.data or {}
-        live_numbers = _live_sector_numbers(data.get("unit_status"))
-        if self._number in live_numbers or (self._number - 1) in live_numbers:
-            return True
         sector = self._sector()
-        return _is_active(sector) if sector else False
+        return bool(sector and sector.get("_vegga_irrigating"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
