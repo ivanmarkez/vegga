@@ -38,6 +38,17 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self.last_command_at: datetime | None = None
         self._history: list[dict[str, Any]] = []
 
+    @staticmethod
+    def _sector_number(sector: dict[str, Any], fallback: int) -> int:
+        lowered = {str(key).casefold(): value for key, value in sector.items()}
+        for key in ("number", "sector", "sectorid", "sector_id", "id", "index"):
+            value = lowered.get(key)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.strip().isdigit():
+                return int(value.strip())
+        return fallback
+
     def _history_due(self, now: datetime) -> bool:
         return (
             self.last_history_update is None
@@ -52,11 +63,22 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
 
             if self._history_due(now):
                 try:
-                    self._history = await self.api.get_sector_history(
-                        (now - timedelta(days=HISTORY_LOOKBACK_DAYS)).date(),
-                        now.date(),
-                        page_size=HISTORY_PAGE_SIZE,
-                    )
+                    # VEGGA's history endpoint expects a concrete sector. A
+                    # request without ``sector`` may return an empty page even
+                    # though the web application shows data. Query every known
+                    # sector and merge the rows. This runs only at the slower
+                    # history interval, not every live-data refresh.
+                    history: list[dict[str, Any]] = []
+                    for fallback, sector_data in enumerate(sectors, start=1):
+                        sector_number = self._sector_number(sector_data, fallback)
+                        sector_rows = await self.api.get_sector_history(
+                            (now - timedelta(days=HISTORY_LOOKBACK_DAYS)).date(),
+                            now.date(),
+                            sector=sector_number,
+                            page_size=HISTORY_PAGE_SIZE,
+                        )
+                        history.extend(sector_rows)
+                    self._history = history
                     self.last_history_update = now
                 except VeggaApiError as err:
                     # History is supplementary: never take program/sector control offline.

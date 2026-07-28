@@ -406,6 +406,17 @@ class VeggaApi:
                 unique.append(item)
         return unique
 
+    @staticmethod
+    def _history_record_sector(record: dict[str, Any]) -> int | None:
+        lowered = {str(key).casefold(): value for key, value in record.items()}
+        for key in ("sector", "sectorid", "sector_id", "sectornumber", "sector_number", "number"):
+            value = lowered.get(key)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.strip().isdigit():
+                return int(value.strip())
+        return None
+
     async def get_sector_history(
         self,
         from_date: date,
@@ -431,9 +442,34 @@ class VeggaApi:
         url = f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/history/sectors"
         data = await self._request_url("GET", url, params=params)
         records = self._extract_history_records(data)
+
+        # The history service uses a pageable response. Its row field names can
+        # differ from the older Agrónic API, so fall back to the first nested
+        # list of dictionaries instead of discarding a valid HTTP 200 response.
+        if not records:
+            records = self._extract_nested_list(
+                data, ("content", "items", "results", "records", "history", "data", "rows")
+            )
+
+        # When a single sector is requested, some responses omit the sector
+        # number from every row because it is already present in the query. Add
+        # it locally so the analysis can associate each row with its entity.
+        if sector is not None:
+            normalized: list[dict[str, Any]] = []
+            for record in records:
+                item = dict(record)
+                if self._history_record_sector(item) is None:
+                    item["sector"] = sector
+                normalized.append(item)
+            records = normalized
+
         if not records:
             shape = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-            _LOGGER.warning("VEGGA returned no parseable sector history; response shape=%s", shape)
+            _LOGGER.warning(
+                "VEGGA returned no parseable sector history for sector=%s; response shape=%s",
+                sector,
+                shape,
+            )
         return records
 
     async def manual_action(self, action: int, parameter1: int) -> Any:
