@@ -292,17 +292,63 @@ class VeggaApi:
             return programs
         raise VeggaApiError("Formato de programas no reconocido")
 
+    @staticmethod
+    def _extract_nested_list(data: Any, preferred_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+        """Find a list of dictionaries in nested VEGGA responses.
+
+        Some Agrónic endpoints return the entity list several levels below
+        ``data``/``content``. The previous shallow parser therefore returned an
+        empty list even though the endpoint answered HTTP 200.
+        """
+        if isinstance(data, list):
+            items = [item for item in data if isinstance(item, dict)]
+            if items:
+                return items
+            for item in data:
+                found = VeggaApi._extract_nested_list(item, preferred_keys)
+                if found:
+                    return found
+            return []
+
+        if not isinstance(data, dict):
+            return []
+
+        # Follow the known wrapper keys first to avoid selecting an unrelated
+        # nested list such as permissions or metadata.
+        for key in preferred_keys:
+            if key in data:
+                found = VeggaApi._extract_nested_list(data[key], preferred_keys)
+                if found:
+                    return found
+
+        # Some responses are maps keyed by sector number.
+        dict_values = [value for value in data.values() if isinstance(value, dict)]
+        if dict_values and len(dict_values) == len(data):
+            return dict_values
+
+        for value in data.values():
+            found = VeggaApi._extract_nested_list(value, preferred_keys)
+            if found:
+                return found
+        return []
+
     async def get_sectors(self) -> list[dict[str, Any]]:
         """Return irrigation sectors configured in the controller."""
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
         data = await self._request("GET", f"/units/{self.device_id}/sectors")
-        sectors = self._extract_list(
-            data, ("content", "data", "sectors", "items", "results")
+        sectors = self._extract_nested_list(
+            data, ("sectors", "content", "data", "items", "results", "value")
         )
-        if sectors or isinstance(data, list):
+        if sectors:
             return sectors
-        raise VeggaApiError("Formato de sectores no reconocido")
+
+        # Do not make the complete integration unavailable when VEGGA changes
+        # only the sector response format. Programs continue working and the
+        # log contains enough information for a future adjustment.
+        shape = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+        _LOGGER.warning("VEGGA returned no parseable sectors; response shape=%s", shape)
+        return []
 
     async def manual_action(self, action: int, parameter1: int) -> Any:
         if not self.device_id:
