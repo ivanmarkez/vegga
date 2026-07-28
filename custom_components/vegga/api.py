@@ -436,34 +436,19 @@ class VeggaApi:
         page_number: int = 1,
         page_size: int = 2000,
     ) -> list[dict[str, Any]]:
-        """Return historical irrigation rows for all sectors or one sector."""
+        """Return all historical irrigation rows, following VEGGA pagination."""
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
-        params: dict[str, Any] = {
+
+        url = f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/history/sectors"
+        base_params: dict[str, Any] = {
             "from": from_date.isoformat(),
             "to": to_date.isoformat(),
             "grouping": grouping,
-            "pageNumber": page_number,
             "pageSize": page_size,
         }
         if sector is not None:
-            params["sector"] = sector
-        url = f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/history/sectors"
-        self.history_debug = {
-            "url": url,
-            "params": dict(params),
-            "sector_requested": sector,
-            "page_number_requested": page_number,
-        }
-        data = await self._request_url("GET", url, params=params)
-
-        # Keep a small, token-free diagnostic sample visible in Home Assistant.
-        # The HAR does not include the JSON response body, so this lets us see
-        # VEGGA's real field names without exposing credentials.
-        if isinstance(data, dict):
-            top_keys = list(data.keys())[:30]
-        else:
-            top_keys = [type(data).__name__]
+            base_params["sector"] = sector
 
         def _sample(value: Any, depth: int = 0) -> Any:
             if depth >= 4:
@@ -476,45 +461,99 @@ class VeggaApi:
                 return value[:200]
             return value
 
-        self.history_debug.update({
-            "top_level_keys": top_keys,
-            "response_sample": _sample(data),
-        })
+        def _records(payload: Any) -> list[dict[str, Any]]:
+            rows = self._extract_history_records(payload)
+            if not rows:
+                rows = self._extract_nested_list(
+                    payload, ("content", "items", "results", "records", "history", "data", "rows")
+                )
+            return rows
 
-        records = self._extract_history_records(data)
+        # VEGGA has returned both zero-based and one-based page metadata in
+        # different calls. Read page 0 and page 1, then continue until all
+        # reported elements have been collected. Duplicate rows are removed.
+        pages_to_fetch: list[int] = [0, 1]
+        fetched_pages: list[int] = []
+        all_records: list[dict[str, Any]] = []
+        first_payload: Any = None
+        total_elements: int | None = None
+        effective_page_size: int | None = None
+        safety_limit = 200
 
-        # The history service uses a pageable response. Its row field names can
-        # differ from the older Agrónic API, so fall back to the first nested
-        # list of dictionaries instead of discarding a valid HTTP 200 response.
-        if not records:
-            records = self._extract_nested_list(
-                data, ("content", "items", "results", "records", "history", "data", "rows")
-            )
+        while pages_to_fetch and len(fetched_pages) < safety_limit:
+            current_page = pages_to_fetch.pop(0)
+            if current_page in fetched_pages:
+                continue
+            params = {**base_params, "pageNumber": current_page}
+            payload = await self._request_url("GET", url, params=params)
+            fetched_pages.append(current_page)
+            if first_payload is None:
+                first_payload = payload
 
-        # When a single sector is requested, some responses omit the sector
-        # number from every row because it is already present in the query. Add
-        # it locally so the analysis can associate each row with its entity.
-        if sector is not None:
-            normalized: list[dict[str, Any]] = []
-            for record in records:
-                item = dict(record)
-                if self._history_record_sector(item) is None:
-                    item["sector"] = sector
-                normalized.append(item)
-            records = normalized
+            page_records = _records(payload)
+            all_records.extend(page_records)
 
-        self.history_debug["parsed_record_count"] = len(records)
-        if records:
-            self.history_debug["first_record"] = _sample(records[0])
+            if isinstance(payload, dict):
+                try:
+                    total_elements = int(payload.get("totalElements"))
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    effective_page_size = int(payload.get("pageSize"))
+                except (TypeError, ValueError):
+                    pass
 
-        if not records:
-            shape = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+            if total_elements is not None:
+                size = effective_page_size or len(page_records) or page_size
+                if size > 0:
+                    last_page = (total_elements - 1) // size
+                    # Include one extra index because some deployments expose
+                    # one-based pages while reporting a zero-based last page.
+                    for candidate in range(0, last_page + 2):
+                        if candidate not in fetched_pages and candidate not in pages_to_fetch:
+                            pages_to_fetch.append(candidate)
+            elif page_records:
+                candidate = current_page + 1
+                if candidate not in fetched_pages and candidate not in pages_to_fetch:
+                    pages_to_fetch.append(candidate)
+            else:
+                # No metadata and an empty page means there is nothing else.
+                pages_to_fetch = [p for p in pages_to_fetch if p <= current_page]
+
+        # Deduplicate records returned by overlapping zero/one-based pages.
+        unique_records: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for record in all_records:
+            key = json.dumps(record, sort_keys=True, ensure_ascii=False, default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            item = dict(record)
+            if sector is not None and self._history_record_sector(item) is None:
+                item["sector"] = sector
+            unique_records.append(item)
+
+        self.history_debug = {
+            "url": url,
+            "params": {**base_params, "pageNumber": "0..N"},
+            "sector_requested": sector,
+            "pages_fetched": fetched_pages,
+            "total_elements_reported": total_elements,
+            "effective_page_size": effective_page_size,
+            "raw_record_count": len(all_records),
+            "parsed_record_count": len(unique_records),
+            "top_level_keys": list(first_payload.keys())[:30] if isinstance(first_payload, dict) else [type(first_payload).__name__],
+            "response_sample": _sample(first_payload),
+        }
+        if unique_records:
+            self.history_debug["first_record"] = _sample(unique_records[0])
+        else:
             _LOGGER.warning(
-                "VEGGA returned no parseable sector history for sector=%s; response shape=%s",
+                "VEGGA returned no parseable sector history for sector=%s; pages=%s",
                 sector,
-                shape,
+                fetched_pages,
             )
-        return records
+        return unique_records
 
     async def manual_action(self, action: int, parameter1: int) -> Any:
         if not self.device_id:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -37,6 +39,13 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self.last_command: str | None = None
         self.last_command_at: datetime | None = None
         self._history: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _normalize_name(value: Any) -> str:
+        """Normalize sector names across Agrónic and history responses."""
+        text = unicodedata.normalize("NFKD", str(value or ""))
+        text = "".join(char for char in text if not unicodedata.combining(char))
+        return re.sub(r"[^a-z0-9]+", "", text.casefold())
 
     @staticmethod
     def _sector_number(sector: dict[str, Any], fallback: int) -> int:
@@ -86,7 +95,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                             ),
                             f"Sector {number}",
                         )
-                        sector_names[name.strip().casefold()] = (number, name)
+                        sector_names[self._normalize_name(name)] = (number, name)
 
                     normalized_history: list[dict[str, Any]] = []
                     for row in history:
@@ -99,7 +108,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                             ),
                             "",
                         )
-                        match = sector_names.get(history_name.strip().casefold())
+                        match = sector_names.get(self._normalize_name(history_name))
                         if match:
                             item["_ha_sector_number"] = match[0]
                             item["_ha_sector_name"] = match[1]
