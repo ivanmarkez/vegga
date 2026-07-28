@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aiohttp import ClientError, ClientResponseError, ClientSession
 
 from .const import API_BASE_URL, CLIENT_ID, CORE_BASE_URL, LOGIN_URL, OAUTH_SCOPE
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class VeggaApiError(Exception):
@@ -86,6 +89,7 @@ class VeggaApi:
 
     async def _authenticate(self, data: dict[str, str]) -> None:
         try:
+            _LOGGER.debug("VEGGA login request to %s using grant_type=%s", LOGIN_URL, data.get("grant_type"))
             async with self._session.post(
                 LOGIN_URL,
                 data=data,
@@ -95,10 +99,15 @@ class VeggaApi:
                 },
                 timeout=20,
             ) as response:
+                body = await response.text()
+                _LOGGER.debug("VEGGA login response status=%s body=%s", response.status, body[:1000])
                 if response.status in (400, 401, 403):
-                    raise VeggaAuthError("Usuario o contraseña de VEGGA incorrectos")
+                    raise VeggaAuthError(f"Login rechazado por VEGGA (HTTP {response.status}): {body[:300]}")
                 response.raise_for_status()
-                payload = await response.json(content_type=None)
+                try:
+                    payload = json.loads(body)
+                except json.JSONDecodeError as err:
+                    raise VeggaApiError(f"Respuesta de login no válida (HTTP {response.status}): {body[:300]}") from err
         except VeggaAuthError:
             raise
         except (ClientError, ValueError, TimeoutError) as err:
@@ -143,6 +152,7 @@ class VeggaApi:
     ) -> Any:
         await self.async_ensure_authenticated()
         try:
+            _LOGGER.debug("VEGGA API request %s %s", method, url)
             async with self._session.request(
                 method,
                 url,
@@ -150,6 +160,7 @@ class VeggaApi:
                 json=json_data,
                 timeout=20,
             ) as response:
+                _LOGGER.debug("VEGGA API response %s %s -> HTTP %s", method, url, response.status)
                 if response.status in (401, 403):
                     if retry_auth:
                         await self.async_ensure_authenticated(force=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import logging
 
 import voluptuous as vol
 
@@ -10,6 +11,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import VeggaApi, VeggaApiError, VeggaAuthError
 from .const import CONF_DEVICE_ID, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _unit_id(unit: dict[str, Any]) -> str | None:
@@ -49,10 +52,15 @@ class VeggaConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 await api.async_login()
                 units = await api.get_units()
-            except VeggaAuthError:
+            except VeggaAuthError as err:
+                _LOGGER.error("VEGGA authentication failed: %s", err, exc_info=True)
                 errors["base"] = "invalid_auth"
-            except VeggaApiError:
+            except VeggaApiError as err:
+                _LOGGER.error("VEGGA connection/device discovery failed: %s", err, exc_info=True)
                 errors["base"] = "cannot_connect"
+            except Exception as err:  # Never hide unexpected config-flow failures
+                _LOGGER.exception("Unexpected VEGGA config flow error: %s", err)
+                errors["base"] = "unknown"
             else:
                 devices: dict[str, str] = {}
                 for unit in units:

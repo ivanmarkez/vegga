@@ -21,7 +21,8 @@
     "error": {
       "cannot_connect": "No se pudo conectar con VEGGA o localizar los controladores.",
       "invalid_auth": "Usuario o contraseña incorrectos.",
-      "no_devices": "No se encontraron controladores en esta cuenta."
+      "no_devices": "No se encontraron controladores en esta cuenta.",
+      "unknown": "Error inesperado. Revisa el registro de Home Assistant."
     },
     "abort": {
       "already_configured": "Este controlador ya está configurado."
