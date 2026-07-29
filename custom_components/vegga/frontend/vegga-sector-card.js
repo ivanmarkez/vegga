@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.53";
+const CARD_VERSION = "0.4.54";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
