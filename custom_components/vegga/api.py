@@ -386,6 +386,23 @@ class VeggaApi:
             return programs
         raise VeggaApiError("Formato de programas no reconocido")
 
+    async def get_program_detail(self, program_number: int) -> dict[str, Any]:
+        """Return the live detail used by VEGGA for one A-5500 program."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request(
+            "GET", f"/units/{self.device_id}/programs/{program_number}"
+        )
+        if isinstance(data, dict):
+            for key in ("content", "data", "program"):
+                nested = data.get(key)
+                if isinstance(nested, dict):
+                    return dict(nested)
+            return dict(data)
+        raise VeggaApiError(
+            f"Formato de detalle del programa {program_number} no reconocido"
+        )
+
     @staticmethod
     def _extract_nested_list(data: Any, preferred_keys: tuple[str, ...]) -> list[dict[str, Any]]:
         """Find a list of dictionaries in nested VEGGA responses.

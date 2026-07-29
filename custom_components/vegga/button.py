@@ -239,18 +239,20 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
         data = self.coordinator.data or {}
         programs = data.get("programs", [])
         program = _program_runtime(programs, self._number)
+        detail = data.get("active_program_details", {}).get(self._number)
+        live_program = detail if isinstance(detail, dict) else program
         active = _program_is_active(
-            program,
+            live_program,
             self._number,
             data.get("irrigating_sectors", []),
         )
         seconds, display = (
             _remaining_time(
-                program,
+                live_program,
                 self._number,
                 data.get("irrigating_sectors", []),
             )
-            if active and program
+            if active and live_program
             else (None, None)
         )
         return {
@@ -259,6 +261,7 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
             "active": active,
             "remaining_seconds": seconds,
             "remaining_time": display,
+            "live_detail_loaded": isinstance(detail, dict),
         }
 
     async def async_press(self) -> None:

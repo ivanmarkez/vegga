@@ -116,6 +116,55 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                 irrigating_sectors = []
                 _LOGGER.debug("No se pudo actualizar el estado de riego VEGGA: %s", err)
 
+            # The general A-5500 program list may report activity while omitting
+            # the live counter (and even returning subprograms=null). VEGGA
+            # fetches /programs/{id} when opening an active program; do the same
+            # only for the small set of programs currently referenced as active.
+            active_program_numbers: set[int] = set()
+            for fallback, program in enumerate(programs, start=1):
+                if not isinstance(program, dict):
+                    continue
+                try:
+                    state = int(program.get("xState", 0))
+                except (TypeError, ValueError):
+                    state = 0
+                if state != 0:
+                    pk = program.get("pk")
+                    raw_number = next(
+                        (
+                            program.get(key)
+                            for key in ("number", "program", "programNumber", "id")
+                            if program.get(key) not in (None, "")
+                        ),
+                        pk.get("id") if isinstance(pk, dict) else fallback,
+                    )
+                    try:
+                        active_program_numbers.add(int(raw_number))
+                    except (TypeError, ValueError):
+                        active_program_numbers.add(fallback)
+            for sector in irrigating_sectors:
+                if not isinstance(sector, dict):
+                    continue
+                try:
+                    number = int(sector.get("xProgramN", 0))
+                except (TypeError, ValueError):
+                    number = 0
+                if number > 0:
+                    active_program_numbers.add(number)
+
+            active_program_details: dict[int, dict[str, Any]] = {}
+            for number in sorted(active_program_numbers):
+                try:
+                    active_program_details[number] = (
+                        await self.api.get_program_detail(number)
+                    )
+                except VeggaApiError as err:
+                    _LOGGER.debug(
+                        "No se pudo actualizar el detalle del programa %s: %s",
+                        number,
+                        err,
+                    )
+
             # Sensor endpoints are optional on some Agrónic configurations.
             # Keep each source independent so a missing probe or meter never
             # makes irrigation controls unavailable.
@@ -261,6 +310,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             self.last_successful_update = now
             return {
                 "programs": programs,
+                "active_program_details": active_program_details,
                 "sectors": sectors,
                 "irrigating_sectors": irrigating_sectors,
                 "unit_status": unit_status,

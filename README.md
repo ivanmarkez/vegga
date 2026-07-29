@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.47
+# VEGGA Agrónic para Home Assistant — v0.4.48
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -64,6 +64,14 @@ El frontend muestra el popup y, además, la integración conserva la protección
 - La detección funciona tanto para riego manual como para riego iniciado por
   programación; no depende de que exista un número de programa activo.
 - Mantiene sin cambios los comandos Automático, Marcha manual y Paro manual.
+
+## 0.4.48
+
+- Consulta `/units/{id}/programs/{programa}` para cada programa activo, igual
+  que la pantalla de detalle oficial de VEGGA.
+- Obtiene desde ese detalle el `xValue`, la unidad y el subprograma en curso.
+- Añade `live_detail_loaded` a los botones para confirmar que se recibió el
+  detalle vivo.
 
 ## 0.4.47
 
