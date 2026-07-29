@@ -15,7 +15,7 @@ from .coordinator import VeggaCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SELECT]
 
-FRONTEND_URL = "/vegga_static/vegga-sector-card-0.4.39.js"
+FRONTEND_URL = "/vegga_static/vegga-sector-card-0.4.40.js"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

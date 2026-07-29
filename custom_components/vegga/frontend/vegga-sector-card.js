@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.39";
+const CARD_VERSION = "0.4.40";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -156,6 +156,14 @@ class VeggaSectorCard extends HTMLElement {
         .cancel { border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); }
         .confirm { border: 0; background: var(--primary-color); color: var(--text-primary-color, white); }
         .dialog-actions button:disabled { opacity: .55; cursor: wait; }
+        ha-card.compact { padding: 10px; border-radius: 12px; }
+        .compact .header { margin-bottom: 8px; }
+        .compact .name { font-size: .92rem; }
+        .compact .subtitle, .compact .status { display: none; }
+        .compact .actions { gap: 5px; }
+        .compact button.mode { min-height: 46px; padding: 5px 2px; border-radius: 8px; gap: 2px; }
+        .compact button.mode ha-icon { --mdc-icon-size: 19px; }
+        .compact .label { font-size: .68rem; }
         @media (max-width: 430px) {
           ha-card { padding: 14px; }
           .actions { gap: 7px; }
@@ -163,7 +171,7 @@ class VeggaSectorCard extends HTMLElement {
           .label { font-size: .76rem; }
         }
       </style>
-      <ha-card>
+      <ha-card class="${this._config.compact ? "compact" : ""}">
         <div class="header">
           <div class="title">
             <div class="name">${this._escape(name)}</div>
@@ -177,7 +185,11 @@ class VeggaSectorCard extends HTMLElement {
               <button class="mode ${mode.className} ${currentMode === mode.value ? "current" : ""}"
                 data-mode="${mode.value}" ${!available || this._busy || currentMode === mode.value ? "disabled" : ""}>
                 <ha-icon icon="${mode.icon}"></ha-icon>
-                <span class="label">${mode.value}</span>
+                <span class="label">${
+                  this._config.compact
+                    ? { "Automático": "Auto", "Marcha manual": "Marcha", "Paro manual": "Paro" }[mode.value]
+                    : mode.value
+                }</span>
               </button>`
           ).join("")}
         </div>
@@ -328,7 +340,7 @@ class VeggaSectorsGrid extends HTMLElement {
         .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px 16px; }
         h1 { margin: 0; color: var(--primary-text-color); font-size: 1.55rem; }
         .count { color: var(--secondary-text-color); }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; align-items: start; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 8px; align-items: start; }
         .empty { padding: 24px; border-radius: 14px; color: var(--secondary-text-color); background: var(--card-background-color); }
         @media (max-width: 430px) {
           :host { padding: 6px; }
@@ -346,7 +358,7 @@ class VeggaSectorsGrid extends HTMLElement {
     const grid = this.shadowRoot.querySelector(".grid");
     entities.forEach(([entityId]) => {
       const card = document.createElement("vegga-sector-card");
-      card.setConfig({ entity: entityId });
+      card.setConfig({ entity: entityId, compact: true });
       card.hass = this._hass;
       grid.appendChild(card);
     });
