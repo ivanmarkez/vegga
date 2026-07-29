@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.42";
+const CARD_VERSION = "0.4.43";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -381,6 +381,215 @@ class VeggaSectorsGrid extends HTMLElement {
   }
 }
 
+class VeggaProgramCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+    this._busy = false;
+  }
+
+  setConfig(config) {
+    if (!config?.start_entity || !config?.stop_entity) {
+      throw new Error("Faltan los botones de marcha o paro del programa.");
+    }
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._busy) this._render();
+  }
+
+  async _press(entityId, operation) {
+    if (this._busy || !this._hass) return;
+    const name = this._config.name || "Programa";
+    if (!window.confirm(`¿Confirmas ${operation.toLowerCase()} el programa “${name}”?`)) return;
+    this._busy = true;
+    this._render();
+    try {
+      await this._hass.callService("button", "press", { entity_id: entityId });
+      this.dispatchEvent(
+        new CustomEvent("hass-notification", {
+          bubbles: true,
+          composed: true,
+          detail: { message: `${operation}: ${name}` },
+        })
+      );
+    } catch (error) {
+      console.error("VEGGA: error al controlar el programa", error);
+      this.dispatchEvent(
+        new CustomEvent("hass-notification", {
+          bubbles: true,
+          composed: true,
+          detail: { message: `No se pudo ejecutar la orden: ${error?.message || error}` },
+        })
+      );
+    } finally {
+      this._busy = false;
+      this._render();
+    }
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._config) return;
+    const start = this._hass?.states?.[this._config.start_entity];
+    const stop = this._hass?.states?.[this._config.stop_entity];
+    const unavailable =
+      !start || !stop || start.state === "unavailable" || stop.state === "unavailable";
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display:block; }
+        ha-card { padding:10px; border-radius:12px; overflow:hidden; }
+        .name { margin-bottom:8px; color:var(--primary-text-color); font-size:.92rem;
+          font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+        button { min-height:48px; border:1px solid var(--divider-color); border-radius:8px;
+          background:var(--card-background-color); color:var(--primary-text-color);
+          display:flex; align-items:center; justify-content:center; gap:6px;
+          font:inherit; font-size:.76rem; cursor:pointer; }
+        button:hover:not(:disabled) { border-color:var(--primary-color); }
+        button:disabled { opacity:.45; cursor:default; }
+        .start ha-icon { color:var(--success-color, #2e7d32); }
+        .stop ha-icon { color:var(--error-color, #d32f2f); }
+        ha-icon { --mdc-icon-size:20px; }
+      </style>
+      <ha-card>
+        <div class="name">${this._escape(this._config.name || "Programa")}</div>
+        <div class="actions">
+          <button class="start" ${unavailable || this._busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:play"></ha-icon><span>Marcha</span>
+          </button>
+          <button class="stop" ${unavailable || this._busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:stop"></ha-icon><span>Paro</span>
+          </button>
+        </div>
+      </ha-card>
+    `;
+    this.shadowRoot.querySelector(".start")?.addEventListener(
+      "click",
+      () => this._press(this._config.start_entity, "Marcha")
+    );
+    this.shadowRoot.querySelector(".stop")?.addEventListener(
+      "click",
+      () => this._press(this._config.stop_entity, "Paro")
+    );
+  }
+
+  _escape(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+}
+
+class VeggaProgramsGrid extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+    this._signature = "";
+  }
+
+  static getStubConfig() {
+    return { title: "Control de programas" };
+  }
+
+  setConfig(config) {
+    this._config = { title: "Control de programas", ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const programs = this._programs();
+    const signature = programs
+      .map((item) => `${item.start_entity}|${item.stop_entity}`)
+      .join(";");
+    if (signature !== this._signature || !this.shadowRoot.querySelector(".grid")) {
+      this._render(programs);
+      return;
+    }
+    this.shadowRoot.querySelectorAll("vegga-program-card").forEach((card) => {
+      card.hass = hass;
+    });
+  }
+
+  _programs() {
+    const pairs = new Map();
+    Object.entries(this._hass?.states || {}).forEach(([entityId, stateObj]) => {
+      if (!entityId.startsWith("button.")) return;
+      const friendlyName = String(stateObj?.attributes?.friendly_name || "");
+      const match = friendlyName.match(/(?:^|\s)(Iniciar|Parar) programa (.+)$/i);
+      if (!match) return;
+      const name = match[2].trim();
+      const key = name.toLocaleLowerCase("es");
+      const pair = pairs.get(key) || { name };
+      pair[match[1].toLocaleLowerCase("es") === "iniciar" ? "start_entity" : "stop_entity"] = entityId;
+      pairs.set(key, pair);
+    });
+    return [...pairs.values()]
+      .filter((item) => item.start_entity && item.stop_entity)
+      .sort((left, right) =>
+        left.name.localeCompare(right.name, "es", { numeric: true, sensitivity: "base" })
+      );
+  }
+
+  _render(preloadedPrograms = null) {
+    if (!this.shadowRoot || !this._hass) return;
+    const programs = preloadedPrograms || this._programs();
+    this._signature = programs
+      .map((item) => `${item.start_entity}|${item.stop_entity}`)
+      .join(";");
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display:block; padding:12px; }
+        .heading { display:flex; align-items:center; justify-content:space-between;
+          gap:12px; padding:6px 4px 16px; }
+        h1 { margin:0; color:var(--primary-text-color); font-size:1.55rem; }
+        .count { color:var(--secondary-text-color); }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
+          gap:8px; align-items:start; }
+        .empty { padding:24px; border-radius:14px; color:var(--secondary-text-color);
+          background:var(--card-background-color); }
+        @media (max-width:430px) {
+          :host { padding:6px; }
+          .grid { grid-template-columns:1fr; }
+          h1 { font-size:1.25rem; }
+        }
+      </style>
+      <div class="heading">
+        <h1>${this._escape(this._config.title || "Control de programas")}</h1>
+        <span class="count">${programs.length} programas</span>
+      </div>
+      <div class="grid"></div>
+      ${programs.length ? "" : '<div class="empty">No se encontraron controles de programa VEGGA.</div>'}
+    `;
+    const grid = this.shadowRoot.querySelector(".grid");
+    programs.forEach((program) => {
+      const card = document.createElement("vegga-program-card");
+      card.setConfig(program);
+      card.hass = this._hass;
+      grid.appendChild(card);
+    });
+  }
+
+  _escape(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+}
+
 if (!customElements.get("vegga-sector-card")) {
   customElements.define("vegga-sector-card", VeggaSectorCard);
 }
@@ -389,6 +598,12 @@ if (!customElements.get("vegga-sector-card-editor")) {
 }
 if (!customElements.get("vegga-sectors-grid")) {
   customElements.define("vegga-sectors-grid", VeggaSectorsGrid);
+}
+if (!customElements.get("vegga-program-card")) {
+  customElements.define("vegga-program-card", VeggaProgramCard);
+}
+if (!customElements.get("vegga-programs-grid")) {
+  customElements.define("vegga-programs-grid", VeggaProgramsGrid);
 }
 
 window.customCards = window.customCards || [];
@@ -408,6 +623,15 @@ if (!window.customCards.some((card) => card.type === "vegga-sectors-grid")) {
     type: "vegga-sectors-grid",
     name: "VEGGA - Todos los sectores",
     description: "Descubre y muestra todos los controles de sector VEGGA.",
+    preview: true,
+    documentationURL: "https://app.veggadigital.com/",
+  });
+}
+if (!window.customCards.some((card) => card.type === "vegga-programs-grid")) {
+  window.customCards.push({
+    type: "vegga-programs-grid",
+    name: "VEGGA - Todos los programas",
+    description: "Descubre todos los programas VEGGA y muestra Marcha y Paro.",
     preview: true,
     documentationURL: "https://app.veggadigital.com/",
   });
