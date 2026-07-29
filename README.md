@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.30
+# VEGGA Agrónic para Home Assistant — v0.4.31
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -70,6 +70,11 @@ El frontend muestra el popup y, además, la integración conserva la protección
 - La detección funciona tanto para riego manual como para riego iniciado por
   programación; no depende de que exista un número de programa activo.
 - Mantiene sin cambios los comandos Automático, Marcha manual y Paro manual.
+
+## 0.4.31
+
+- Lee `checkPH` y `checkCE` desde `unit_status.fertilizer`, que es la fuente usada por la vista A-5500.
+- Expone en cada entidad el índice analógico configurado, identificador, valor crudo y número de entradas.
 
 ## 0.4.30
 

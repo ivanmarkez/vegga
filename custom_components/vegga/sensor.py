@@ -179,7 +179,9 @@ def _analog_row(data: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[s
     # This is the selection rule used by VEGGA for A-5500: checkCE/checkPH
     # contain the one-based analogue input assigned to fertilization control.
     config_key = "checkPH" if kind == "ph" else "checkCE"
-    configured_input = _find_nested_value(data.get("fertilizer_config"), config_key)
+    configured_input = _find_nested_value(data.get("unit_status"), config_key)
+    if configured_input in (None, "", 0, "0"):
+        configured_input = _find_nested_value(data.get("fertilizer_config"), config_key)
     try:
         configured_input = int(configured_input)
     except (TypeError, ValueError):
@@ -269,11 +271,26 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         source = self._source()
+        config_key = "checkPH" if self._kind == "ph" else "checkCE"
+        configured_input = _find_nested_value(
+            (self.coordinator.data or {}).get("unit_status"), config_key
+        )
+        if configured_input in (None, "", 0, "0"):
+            configured_input = _find_nested_value(
+                (self.coordinator.data or {}).get("fertilizer_config"), config_key
+            )
         return {
             "source": "VEGGA analogs",
+            "configured_analog": configured_input,
             "input": source[0].get("input") if source else None,
+            "analog_id": (
+                source[0].get("pk", {}).get("id")
+                if source and isinstance(source[0].get("pk"), dict)
+                else source[0].get("id") if source else None
+            ),
             "format_id": source[0].get("formatId") if source else None,
             "raw_value": source[0].get("xValue") if source else None,
+            "analog_count": len((self.coordinator.data or {}).get("analogs", [])),
         }
 
 
