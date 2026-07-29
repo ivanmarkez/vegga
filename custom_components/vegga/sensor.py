@@ -178,7 +178,11 @@ def _find_nested_value(value: Any, wanted_key: str) -> Any:
 def _analog_row(data: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
     # This is the selection rule used by VEGGA for A-5500: checkCE/checkPH
     # contain the one-based analogue input assigned to fertilization control.
-    config_keys = ("checkPH", "securityPH") if kind == "ph" else ("checkCE", "securityCE")
+    config_keys = {
+        "ph": ("checkPH", "securityPH"),
+        "ec": ("checkCE", "securityCE"),
+        "pressure": (),
+    }[kind]
     configured_input = None
     for config_key in config_keys:
         configured_input = _find_nested_value(data.get("unit_status"), config_key)
@@ -224,21 +228,47 @@ def _analog_row(data: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[s
             or re.search(r"(^|[^a-z])(ce|ec|ms)([^a-z]|$)", haystack)
         ):
             return row, fmt
+        if kind == "pressure" and (
+            "presion" in haystack
+            or "pressure" in haystack
+            or re.search(r"(^|[^a-z])(bar|bars)([^a-z]|$)", haystack)
+        ):
+            return row, fmt
+
+    # Confirmed directly in VEGGA for Agrónic 17669 (A-5500 firmware 1.32):
+    # analogue 1 is EC and analogue 2 is pH. The controller does not expose
+    # checkPH/checkCE in this configuration, so use their visible positions.
+    fallback_position = {"ec": 1, "ph": 2, "pressure": 3}[kind]
+    if len(analogs) >= fallback_position:
+        row = analogs[fallback_position - 1]
+        return row, _analog_format(data, row)
     return None
 
 
-def _analog_value(row: dict[str, Any], fmt: dict[str, Any]) -> float | None:
-    for key in ("value", "currentValue", "formattedValue", "reading"):
+def _analog_value(
+    row: dict[str, Any],
+    fmt: dict[str, Any],
+    *,
+    default_decimals: int = 0,
+    force_decimals: int | None = None,
+) -> float | None:
+    for key in ("formattedValue", "reading"):
         value = _number(row.get(key))
         if value is not None:
             return value
     value = _number(row.get("xValue"))
     if value is None:
+        value = _number(row.get("currentValue"))
+    if value is None:
+        value = _number(row.get("value"))
+    if value is None:
         return None
     try:
-        decimals = int(fmt.get("decimals", 0))
+        decimals = force_decimals if force_decimals is not None else int(
+            fmt.get("decimals", default_decimals)
+        )
     except (TypeError, ValueError):
-        decimals = 0
+        decimals = default_decimals
     return value / (10 ** decimals)
 
 
@@ -273,8 +303,16 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
     def __init__(self, coordinator, kind: str) -> None:
         super().__init__(coordinator)
         self._kind = kind
-        self._attr_name = "pH" if kind == "ph" else "Conductividad"
-        self._attr_icon = "mdi:ph" if kind == "ph" else "mdi:flash"
+        self._attr_name = {
+            "ph": "pH",
+            "ec": "Conductividad",
+            "pressure": "Presión",
+        }[kind]
+        self._attr_icon = {
+            "ph": "mdi:ph",
+            "ec": "mdi:flash",
+            "pressure": "mdi:gauge",
+        }[kind]
         self._attr_unique_id = f"{coordinator.api.device_id}_{kind}"
 
     def _source(self):
@@ -284,7 +322,7 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
     def native_value(self) -> float | None:
         source = self._source()
         if source:
-            value = _analog_value(*source)
+            value = _analog_value(*source, default_decimals=1, force_decimals=1)
             if value is not None:
                 return value
         return _ph_regulation_value(self.coordinator.data or {}) if self._kind == "ph" else None
@@ -293,12 +331,16 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
     def native_unit_of_measurement(self) -> str | None:
         source = self._source()
         unit = _analog_unit(source[1]) if source else None
-        return unit or ("pH" if self._kind == "ph" else "mS")
+        return unit or {"ph": "pH", "ec": "mS", "pressure": "bar"}[self._kind]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         source = self._source()
-        config_keys = ("checkPH", "securityPH") if self._kind == "ph" else ("checkCE", "securityCE")
+        config_keys = {
+            "ph": ("checkPH", "securityPH"),
+            "ec": ("checkCE", "securityCE"),
+            "pressure": (),
+        }[self._kind]
         configured_input = None
         configured_from = None
         for config_key in config_keys:
@@ -432,6 +474,7 @@ async def async_setup_entry(
         VeggaLiveStatusDiagnosticSensor(coordinator),
         VeggaAnalogSensor(coordinator, "ph"),
         VeggaAnalogSensor(coordinator, "ec"),
+        VeggaAnalogSensor(coordinator, "pressure"),
         VeggaFlowMeterSensor(coordinator),
     ]
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):

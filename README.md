@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.32
+# VEGGA Agrónic para Home Assistant — v0.4.34
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -70,6 +70,15 @@ El frontend muestra el popup y, además, la integración conserva la protección
 - La detección funciona tanto para riego manual como para riego iniciado por
   programación; no depende de que exista un número de programa activo.
 - Mantiene sin cambios los comandos Automático, Marcha manual y Paro manual.
+
+## 0.4.34
+
+- Añade el sensor de presión de la entrada analógica 3, expresado en bar.
+
+## 0.4.33
+
+- Vincula la entrada analógica 1 a conductividad y la 2 a pH en el Agrónic 17669.
+- Corrige la escala implícita de un decimal: `5 → 0,5 mS` y `77 → 7,7 pH`.
 
 ## 0.4.32
 
