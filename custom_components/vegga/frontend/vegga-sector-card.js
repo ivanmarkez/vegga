@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.40";
+const CARD_VERSION = "0.4.42";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -38,6 +38,10 @@ class VeggaSectorCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Home Assistant publishes state updates frequently. Do not rebuild the
+    // shadow DOM while the confirmation dialog is open, otherwise the button
+    // the user is about to confirm disappears underneath the pointer.
+    if (this._selectedMode || this._busy) return;
     this._render();
   }
 
@@ -294,6 +298,7 @@ class VeggaSectorsGrid extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config = {};
     this._hass = null;
+    this._entitySignature = "";
   }
 
   static getStubConfig() {
@@ -307,7 +312,17 @@ class VeggaSectorsGrid extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    this._render();
+    const entities = this._sectorEntities();
+    const signature = entities.map(([entityId]) => entityId).join("|");
+    if (signature !== this._entitySignature || !this.shadowRoot.querySelector(".grid")) {
+      this._render(entities);
+      return;
+    }
+    // Preserve the existing sector-card elements (and any open confirmation
+    // dialog) and only pass them the new Home Assistant state.
+    this.shadowRoot.querySelectorAll("vegga-sector-card").forEach((card) => {
+      card.hass = hass;
+    });
   }
 
   _sectorEntities() {
@@ -331,9 +346,10 @@ class VeggaSectorsGrid extends HTMLElement {
     return Math.max(3, Math.ceil(this._sectorEntities().length / 3) * 3);
   }
 
-  _render() {
+  _render(preloadedEntities = null) {
     if (!this.shadowRoot || !this._hass) return;
-    const entities = this._sectorEntities();
+    const entities = preloadedEntities || this._sectorEntities();
+    this._entitySignature = entities.map(([entityId]) => entityId).join("|");
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; padding: 12px; }
