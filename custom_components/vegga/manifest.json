@@ -1,7 +1,7 @@
 {
   "domain": "vegga",
   "name": "VEGGA Agrónic",
-  "version": "0.4.40",
+  "version": "0.4.41",
   "documentation": "https://app.veggadigital.com/",
   "issue_tracker": "https://app.veggadigital.com/",
   "config_flow": true,

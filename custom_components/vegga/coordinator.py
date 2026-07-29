@@ -63,10 +63,47 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             or now - self.last_history_update >= timedelta(minutes=HISTORY_REFRESH_MINUTES)
         )
 
+    @staticmethod
+    def _controller_bool(value: Any) -> bool | None:
+        """Parse the boolean/integer flags returned by Agrónic."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"1", "true", "on", "yes", "si", "sí"}:
+                return True
+            if normalized in {"0", "false", "off", "no"}:
+                return False
+        return None
+
+    def _sync_sector_modes_from_controller(
+        self, sectors: list[dict[str, Any]]
+    ) -> None:
+        """Synchronize HA selectors with the real A-5500 manual state."""
+        for fallback, sector in enumerate(sectors, start=1):
+            if not isinstance(sector, dict):
+                continue
+            manual = self._controller_bool(sector.get("xManual"))
+            if manual is None:
+                # Do not replace a locally known mode when this firmware omits
+                # the authoritative manual/automatic flag.
+                continue
+            number = self._sector_number(sector, fallback)
+            if not manual:
+                self.sector_modes[number] = "Automático"
+                continue
+            start_stop = self._controller_bool(sector.get("xStartStop"))
+            self.sector_modes[number] = (
+                "Marcha manual" if start_stop is not False else "Paro manual"
+            )
+
     async def _async_update_data(self) -> dict[str, list[dict[str, Any]]]:
         try:
             programs = await self.api.get_programs()
             sectors = await self.api.get_sectors()
+            self._sync_sector_modes_from_controller(sectors)
             unit_status = await self.api.get_unit_status()
             now = datetime.now(timezone.utc)
 
