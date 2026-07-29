@@ -1,10 +1,6 @@
-VEGGA Agrónic - versión 0.4.21
+VEGGA Agrónic v0.4.22
 
-Los sectores se controlan exclusivamente mediante el selector Modo de funcionamiento:
-- Automático
-- Marcha manual
-- Paro manual
+Incluye la tarjeta Lovelace vegga-sector-card con confirmación emergente.
+Recurso: /vegga_static/vegga-sector-card.js?v=0.4.22
 
-Esta versión elimina automáticamente del registro de entidades los botones antiguos y duplicados de sector.
-
-Seguridad: el selector solo prepara el cambio. Es obligatorio pulsar Confirmar cambio de modo para enviar la orden al controlador.
+La tarjeta utiliza el selector de modo y el botón de confirmación interno para mantener la seguridad en dos capas.
