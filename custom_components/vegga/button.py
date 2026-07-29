@@ -62,7 +62,7 @@ def _format_remaining(value: Any, unit: Any) -> tuple[int | None, str | None]:
         return None, None
 
     # VEGGA A-5500: 0 = hours/minutes; 3 = minutes/seconds.
-    if unit_number == 0:
+    if unit_number in (0, 4):
         rounded_minutes = (seconds + 59) // 60
         hours, minutes = divmod(rounded_minutes, 60)
         return seconds, f"{hours:02d}:{minutes:02d}"
@@ -84,6 +84,30 @@ def _program_unit(program: dict[str, Any]) -> int | None:
         if unit is not None:
             return unit
     return None
+
+
+def _active_xvalue_rows(value: Any) -> list[dict[str, Any]]:
+    """Recursively find live irrigation rows regardless of VEGGA wrappers."""
+    found: list[dict[str, Any]] = []
+
+    def walk(item: Any) -> None:
+        if isinstance(item, list):
+            for child in item:
+                walk(child)
+            return
+        if not isinstance(item, dict):
+            return
+        if (
+            item.get("xValue") is not None
+            and _integer(item.get("xState")) == 1
+        ):
+            found.append(item)
+        for child in item.values():
+            if isinstance(child, (dict, list)):
+                walk(child)
+
+    walk(value)
+    return found
 
 
 def _remaining_time(
@@ -143,6 +167,17 @@ def _remaining_time(
                 )
                 if formatted[1] is not None:
                     return formatted
+
+    # Firmware variants wrap programSector in content/data objects. Search the
+    # complete detail for the same xState=1 + xValue pair used by VEGGA.
+    for active_row in _active_xvalue_rows(program):
+        row_unit = _program_unit(active_row)
+        formatted = _format_remaining(
+            active_row.get("xValue"),
+            row_unit if row_unit is not None else program_unit,
+        )
+        if formatted[1] is not None:
+            return formatted
 
     # The official A-5500 sector detail uses sector.xValue as the program's
     # pending value. Match it through xProgramN, using the program unit when
@@ -291,6 +326,17 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
                 isinstance(detail, dict)
                 and isinstance(detail.get("programSector"), list)
             ),
+            "live_detail_keys": sorted(detail.keys()) if isinstance(detail, dict) else [],
+            "live_program_unit": _program_unit(live_program) if live_program else None,
+            "live_program_xvalue": live_program.get("xValue") if live_program else None,
+            "live_active_xvalue_rows": [
+                {
+                    key: row.get(key)
+                    for key in ("xState", "xValue", "unit", "irrigUnits", "irrigUnitsSubp")
+                    if row.get(key) is not None
+                }
+                for row in (_active_xvalue_rows(live_program) if live_program else [])[:3]
+            ],
         }
 
     async def async_press(self) -> None:

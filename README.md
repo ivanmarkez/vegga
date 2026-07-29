@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.49
+# VEGGA Agrónic para Home Assistant — v0.4.50
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -64,6 +64,14 @@ El frontend muestra el popup y, además, la integración conserva la protección
 - La detección funciona tanto para riego manual como para riego iniciado por
   programación; no depende de que exista un número de programa activo.
 - Mantiene sin cambios los comandos Automático, Marcha manual y Paro manual.
+
+## 0.4.50
+
+- Localiza recursivamente filas activas `xState=1` con `xValue`, aunque el
+  firmware envuelva `programSector` dentro de otros objetos.
+- Interpreta también el formato 4 del A-5500 como contador temporal.
+- Añade atributos diagnósticos acotados con las claves y filas activas
+  recibidas en el detalle.
 
 ## 0.4.49
 
