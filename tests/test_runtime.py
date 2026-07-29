@@ -45,3 +45,16 @@ def test_database_id_is_resolved_to_controller_number() -> None:
     runtime = [{"pk": {"id": 81}, "xProgramN": 5}]
 
     assert active_sector_numbers(runtime, sectors) == {2}
+
+
+def test_a5500_irrigation_flag_marks_sector_active() -> None:
+    sectors = [
+        {"_agronic_number": 1, "pk": {"id": 30}, "name": "Frutales"},
+        {"_agronic_number": 2, "pk": {"id": 81}, "name": "Olivos"},
+    ]
+    runtime = [
+        {"pk": {"id": 30}, "irrigation": False, "xProgramN": 0},
+        {"pk": {"id": 81}, "irrigation": True, "xProgramN": 0},
+    ]
+
+    assert active_sector_numbers(runtime, sectors) == {2}

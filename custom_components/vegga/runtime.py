@@ -30,6 +30,7 @@ def is_active(item: dict[str, Any]) -> bool:
         "isRunning",
         "executing",
         "inProgress",
+        "irrigation",
         "irrigating",
     ):
         value = item.get(key)
