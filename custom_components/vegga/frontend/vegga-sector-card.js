@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.43";
+const CARD_VERSION = "0.4.44";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -437,6 +437,8 @@ class VeggaProgramCard extends HTMLElement {
     if (!this.shadowRoot || !this._config) return;
     const start = this._hass?.states?.[this._config.start_entity];
     const stop = this._hass?.states?.[this._config.stop_entity];
+    const active = Boolean(start?.attributes?.active);
+    const remaining = start?.attributes?.remaining_time;
     const unavailable =
       !start || !stop || start.state === "unavailable" || stop.state === "unavailable";
     this.shadowRoot.innerHTML = `
@@ -445,6 +447,11 @@ class VeggaProgramCard extends HTMLElement {
         ha-card { padding:10px; border-radius:12px; overflow:hidden; }
         .name { margin-bottom:8px; color:var(--primary-text-color); font-size:.92rem;
           font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .runtime { display:flex; align-items:center; gap:5px; min-height:18px;
+          margin:-3px 0 7px; color:var(--secondary-text-color); font-size:.72rem; }
+        .runtime.active { color:var(--success-color, #2e7d32); font-weight:650; }
+        .dot { width:7px; height:7px; border-radius:50%; background:var(--disabled-color); }
+        .runtime.active .dot { background:var(--success-color, #2e7d32); }
         .actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
         button { min-height:48px; border:1px solid var(--divider-color); border-radius:8px;
           background:var(--card-background-color); color:var(--primary-text-color);
@@ -458,6 +465,16 @@ class VeggaProgramCard extends HTMLElement {
       </style>
       <ha-card>
         <div class="name">${this._escape(this._config.name || "Programa")}</div>
+        <div class="runtime ${active ? "active" : ""}">
+          <span class="dot"></span>
+          <span>${
+            active
+              ? remaining
+                ? `En marcha · Restante ${this._escape(remaining)}`
+                : "En marcha · Tiempo no disponible"
+              : "Detenido"
+          }</span>
+        </div>
         <div class="actions">
           <button class="start" ${unavailable || this._busy ? "disabled" : ""}>
             <ha-icon icon="mdi:play"></ha-icon><span>Marcha</span>
