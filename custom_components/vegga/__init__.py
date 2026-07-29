@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import entity_registry as er
 
 from .api import VeggaApi
 from .const import CONF_DEVICE_ID, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
@@ -41,6 +42,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = VeggaCoordinator(hass, entry, api, scan_interval)
     await coordinator.async_config_entry_first_refresh()
+
+    # Clean registry entries left by releases that created entities without a
+    # usable data source. Search within this config entry instead of relying on
+    # a platform lookup, because older HA versions may retain a different
+    # platform association for restored entities.
+    registry = er.async_get(hass)
+    obsolete_unique_ids = {
+        f"{api.device_id}_pressure",
+        f"{api.device_id}_history_anomaly_count",
+    }
+    for registry_entry in list(registry.entities.values()):
+        if registry_entry.unique_id not in obsolete_unique_ids:
+            continue
+        if (
+            registry_entry.config_entry_id != entry.entry_id
+            and registry_entry.platform != DOMAIN
+        ):
+            continue
+        hass.states.async_remove(registry_entry.entity_id)
+        registry.async_remove(registry_entry.entity_id)
 
     domain_data[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
