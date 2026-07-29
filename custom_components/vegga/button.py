@@ -93,6 +93,37 @@ def _remaining_time(program: dict[str, Any]) -> tuple[int | None, str | None]:
     return None, None
 
 
+def _program_is_active(
+    program: dict[str, Any] | None,
+    program_number: int,
+    irrigating_sectors: list[dict[str, Any]],
+) -> bool:
+    """Resolve program activity from A-5500 live program and sector fields."""
+    if program:
+        # The official VEGGA program detail treats xState=0 as stopped and any
+        # other state as a running, waiting, suspended, or finishing program.
+        state = _integer(program.get("xState"))
+        if state is not None:
+            return state != 0
+        if is_active(program):
+            return True
+
+    # The sectors endpoint is the authoritative live source already used for
+    # the working active-sector counter. Scheduled irrigation identifies its
+    # parent program through xProgramN.
+    for sector in irrigating_sectors:
+        if not isinstance(sector, dict) or not is_active(sector):
+            continue
+        referenced = None
+        for key in ("xProgramN", "xprogramn", "program", "programNumber", "programId"):
+            referenced = _integer(sector.get(key))
+            if referenced is not None:
+                break
+        if referenced == program_number:
+            return True
+    return False
+
+
 def _remove_legacy_sector_buttons(
     hass: HomeAssistant,
     device_id: str,
@@ -160,9 +191,14 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        programs = (self.coordinator.data or {}).get("programs", [])
+        data = self.coordinator.data or {}
+        programs = data.get("programs", [])
         program = _program_runtime(programs, self._number)
-        active = bool(program and is_active(program))
+        active = _program_is_active(
+            program,
+            self._number,
+            data.get("irrigating_sectors", []),
+        )
         seconds, display = _remaining_time(program) if active and program else (None, None)
         return {
             "program_number": self._number,

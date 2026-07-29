@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
@@ -15,7 +16,9 @@ from .coordinator import VeggaCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SELECT]
 
-FRONTEND_URL = "/vegga_static/vegga-sector-card-0.4.44.js"
+FRONTEND_PATH = "/vegga_static/vegga-sector-card.js"
+FRONTEND_URL = f"{FRONTEND_PATH}?v=0.4.46"
+LEGACY_FRONTEND_PATH = "/vegga_static/vegga-sector-card-0.4.44.js"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -23,8 +26,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not domain_data.get("_frontend_registered"):
         frontend_file = Path(__file__).parent / "frontend" / "vegga-sector-card.js"
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(FRONTEND_URL, str(frontend_file), True)]
+            [
+                StaticPathConfig(FRONTEND_PATH, str(frontend_file), True),
+                StaticPathConfig(LEGACY_FRONTEND_PATH, str(frontend_file), True),
+            ]
         )
+        add_extra_js_url(hass, FRONTEND_URL)
         domain_data["_frontend_registered"] = True
 
     api = VeggaApi(

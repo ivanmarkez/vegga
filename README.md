@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.44
+# VEGGA Agrónic para Home Assistant — v0.4.46
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -12,17 +12,11 @@ Esta versión incorpora `VEGGA - Control seguro de sector`, una tarjeta Lovelace
 
 La tarjeta **nunca envía la orden al primer toque**. Antes abre una ventana emergente indicando el sector, el modo actual y el nuevo modo. La orden se envía únicamente al pulsar **Sí, cambiar modo**.
 
-## Activar la tarjeta (una sola vez)
+## Activar la tarjeta
 
-Tras instalar o actualizar la integración y reiniciar Home Assistant:
-
-1. Abre **Ajustes → Paneles → Recursos**.
-2. Añade el recurso:
-   - URL: `/vegga_static/vegga-sector-card-0.4.44.js`
-   - Tipo: `Módulo JavaScript`
-3. Recarga completamente el navegador o la aplicación.
-4. Añade una tarjeta y busca **VEGGA - Control seguro de sector**.
-5. Selecciona la entidad `select` llamada **Modo de funcionamiento** del sector.
+Desde la versión 0.4.45 la integración registra y carga automáticamente el
+módulo de las tarjetas al arrancar Home Assistant. No es necesario añadir ni
+actualizar recursos Lovelace manualmente.
 
 La tarjeta detecta automáticamente el botón interno de confirmación del mismo dispositivo. También puede indicarse manualmente con `confirm_entity`.
 
@@ -70,6 +64,22 @@ El frontend muestra el popup y, además, la integración conserva la protección
 - La detección funciona tanto para riego manual como para riego iniciado por
   programación; no depende de que exista un número de programa activo.
 - Mantiene sin cambios los comandos Automático, Marcha manual y Paro manual.
+
+## 0.4.46
+
+- Corrige la detección de programas activos leyendo `xState` del programa.
+- Confirma además la actividad mediante `xProgramN` de los sectores que están
+  regando, incluida la activación automática por horario.
+- Conserva como fuente autoritativa la misma lista viva que ya corrige el
+  contador de sectores activos.
+
+## 0.4.45
+
+- Registra automáticamente el JavaScript de las tarjetas mediante el frontend
+  de Home Assistant.
+- Utiliza una ruta estable con versión de caché, de modo que las futuras
+  actualizaciones solo requieren instalar el ZIP y reiniciar Home Assistant.
+- Mantiene la ruta 0.4.44 como alias compatible con el recurso manual existente.
 
 ## 0.4.44
 
