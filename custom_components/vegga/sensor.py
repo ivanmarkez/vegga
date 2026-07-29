@@ -366,6 +366,10 @@ class VeggaSectorConsumptionSensor(VeggaSectorEntity, SensorEntity):
         return {
             "sector_number": analysis.sector_number,
             "sector_name": analysis.sector_name,
+            "program_number": analysis.program_number,
+            "program_name": analysis.program_name,
+            "baseline_method": analysis.baseline_method,
+            "baseline_sample_count": analysis.baseline_sample_count,
             "baseline_volume_m3": analysis.baseline_volume_m3,
             "deviation_percent": analysis.deviation_percent,
             "deviation_direction": direction,
@@ -407,7 +411,7 @@ class _VeggaSectorAnalysisSensor(VeggaSectorEntity, SensorEntity):
 
 
 class VeggaSectorBaselineConsumptionSensor(_VeggaSectorAnalysisSensor):
-    """Median of the previous usable irrigations for this sector."""
+    """Median of the last equivalent irrigations for this sector."""
 
     _attr_name = "Consumo habitual"
     _attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
@@ -427,7 +431,10 @@ class VeggaSectorBaselineConsumptionSensor(_VeggaSectorAnalysisSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         analysis = self._analysis()
         return {
-            "method": "Mediana de riegos anteriores",
+            "method": analysis.baseline_method,
+            "program_number": analysis.program_number,
+            "program_name": analysis.program_name,
+            "baseline_sample_count": analysis.baseline_sample_count,
             "sample_count": analysis.sample_count,
             "sector_number": analysis.sector_number,
         }
@@ -456,6 +463,10 @@ class VeggaSectorConsumptionDeviationSensor(_VeggaSectorAnalysisSensor):
         return {
             "level": analysis.level,
             "last_volume_m3": analysis.last_volume_m3,
+            "program_number": analysis.program_number,
+            "program_name": analysis.program_name,
+            "baseline_method": analysis.baseline_method,
+            "baseline_sample_count": analysis.baseline_sample_count,
             "baseline_volume_m3": analysis.baseline_volume_m3,
             "interpretation": (
                 "Consumo superior al habitual"

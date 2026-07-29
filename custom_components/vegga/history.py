@@ -18,6 +18,10 @@ from .const import (
 class SectorAnalysis:
     sector_number: int
     sector_name: str
+    program_number: int | None
+    program_name: str | None
+    baseline_method: str
+    baseline_sample_count: int
     sample_count: int
     last_volume_m3: float | None
     baseline_volume_m3: float | None
@@ -130,6 +134,29 @@ def sector_number(record: dict[str, Any]) -> int | None:
     return int(number) if number is not None else None
 
 
+
+def program_number(record: dict[str, Any]) -> int | None:
+    """Extract the Agrónic program number associated with a history record."""
+    value = _first(record, (
+        "_ha_program_number", "program", "programId", "program_id",
+        "programNumber", "program_number", "xProgramN", "xprogramn",
+        "irrigationProgram", "irrigation_program", "programa",
+    ))
+    if isinstance(value, dict):
+        value = _first(value, ("number", "id", "programNumber", "program_number", "value"))
+    number = _number(value)
+    return int(number) if number is not None and number > 0 else None
+
+
+def program_name(record: dict[str, Any], number: int | None) -> str | None:
+    value = _first(record, (
+        "_ha_program_name", "programName", "program_name",
+        "irrigationProgramName", "irrigation_program_name", "programaNombre",
+    ))
+    if value not in (None, ""):
+        return str(value)
+    return f"Programa {number}" if number is not None else None
+
 def sector_name(record: dict[str, Any], fallback: str) -> str:
     value = _first(record, ("_ha_sector_name", "sectorName", "sector_name", "name", "nombre", "description"))
     return str(value) if value not in (None, "") else fallback
@@ -204,17 +231,41 @@ def analyse_sector(
     number: int,
     name: str,
 ) -> SectorAnalysis:
+    """Compare the latest irrigation with equivalent previous irrigations.
+
+    Equivalent means the same sector and, whenever the history payload exposes
+    it, the same Agrónic program. The baseline is the median of up to the last
+    ten equivalent irrigations. If the latest record has no program metadata,
+    the comparison falls back to the last ten irrigations of the sector.
+    """
     matching = [record for record in records if sector_number(record) == number]
     matching.sort(key=lambda item: start_time(item) or end_time(item) or datetime.min.replace(tzinfo=timezone.utc))
 
     usable = [(record, volume_m3(record)) for record in matching]
     usable = [(record, volume) for record, volume in usable if volume is not None and volume > 0]
     if not usable:
-        return SectorAnalysis(number, name, 0, None, None, None, None, None, None, None, None, None, None, "unknown")
+        return SectorAnalysis(
+            number, name, None, None, "Sin histórico", 0, 0, None, None, None,
+            None, None, None, None, None, None, None, None, "unknown"
+        )
 
     last_record, last_volume = usable[-1]
-    previous = [volume for _, volume in usable[:-1]][-BASELINE_SAMPLE_COUNT:]
-    baseline = median(previous) if len(previous) >= MIN_BASELINE_SAMPLES else None
+    last_program = program_number(last_record)
+    last_program_name = program_name(last_record, last_program)
+
+    previous_records = usable[:-1]
+    baseline_method = "Últimos riegos del sector"
+    equivalent = previous_records
+    if last_program is not None:
+        same_program = [
+            (record, volume) for record, volume in previous_records
+            if program_number(record) == last_program
+        ]
+        equivalent = same_program
+        baseline_method = f"Mismo sector + programa {last_program}"
+
+    baseline_values = [volume for _, volume in equivalent][-BASELINE_SAMPLE_COUNT:]
+    baseline = median(baseline_values) if len(baseline_values) >= MIN_BASELINE_SAMPLES else None
     deviation = ((last_volume - baseline) / baseline * 100.0) if baseline and baseline > 0 else None
 
     level = "normal"
@@ -231,6 +282,10 @@ def analyse_sector(
     return SectorAnalysis(
         number,
         sector_name(last_record, name),
+        last_program,
+        last_program_name,
+        baseline_method,
+        len(baseline_values),
         len(usable),
         last_volume,
         baseline,
@@ -244,3 +299,4 @@ def analyse_sector(
         end_time(last_record),
         level,
     )
+
