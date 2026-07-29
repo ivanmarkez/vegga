@@ -210,3 +210,43 @@ def sector_is_irrigating(
     target_sector: int,
 ) -> bool:
     return target_sector in active_sector_numbers(runtime_rows, configured_sectors)
+
+
+def program_for_sector(
+    runtime_rows: list[dict[str, Any]],
+    configured_sectors: list[dict[str, Any]],
+    target_sector: int,
+) -> int | None:
+    """Return the program currently irrigating a controller sector."""
+    candidates: list[dict[str, Any]] = []
+    for row in runtime_rows:
+        if (
+            isinstance(row, dict)
+            and is_active(row)
+            and target_sector in active_sector_numbers([row], configured_sectors)
+        ):
+            candidates.append(row)
+
+    # Some A-5500 responses publish xProgramN directly in the normal sector
+    # list rather than in ?irrigation=true.
+    if 1 <= target_sector <= len(configured_sectors):
+        row = configured_sectors[target_sector - 1]
+        if isinstance(row, dict) and is_active(row):
+            candidates.append(row)
+
+    # When the runtime endpoint returns all sectors in controller order, an
+    # otherwise identifier-less row can still be resolved by its position.
+    if len(runtime_rows) == len(configured_sectors) and 1 <= target_sector <= len(runtime_rows):
+        row = runtime_rows[target_sector - 1]
+        if isinstance(row, dict) and is_active(row):
+            candidates.append(row)
+
+    for row in candidates:
+        for key in ("xProgramN", "programNumber", "program", "programId"):
+            try:
+                number = int(row.get(key))
+            except (TypeError, ValueError):
+                continue
+            if number > 0:
+                return number
+    return None

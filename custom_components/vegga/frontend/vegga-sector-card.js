@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.52";
+const CARD_VERSION = "0.4.53";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -123,6 +123,12 @@ class VeggaSectorCard extends HTMLElement {
     const available = Boolean(stateObj) && stateObj.state !== "unavailable";
     const name = this._friendlyName(stateObj);
     const selected = this._selectedMode;
+    const irrigating = stateObj?.attributes?.irrigating === true;
+    const programNumber = stateObj?.attributes?.active_program_number;
+    const programName = stateObj?.attributes?.active_program_name;
+    const irrigationText = irrigating
+      ? `Regando${programNumber ? ` · P${programNumber}` : ""}${programName ? ` · ${programName}` : ""}`
+      : "";
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -132,6 +138,7 @@ class VeggaSectorCard extends HTMLElement {
         .title { min-width: 0; }
         .name { font-size: 1.1rem; font-weight: 600; color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .subtitle { margin-top: 4px; color: var(--secondary-text-color); font-size: .9rem; }
+        .irrigating { margin-top: 4px; color: var(--success-color, #43a047); font-size: .82rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .status { padding: 5px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; background: var(--secondary-background-color); white-space: nowrap; }
         .status.unavailable { color: var(--error-color); }
         .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -164,6 +171,7 @@ class VeggaSectorCard extends HTMLElement {
         .compact .header { margin-bottom: 8px; }
         .compact .name { font-size: .92rem; }
         .compact .subtitle, .compact .status { display: none; }
+        .compact .irrigating { display: block; margin-top: 2px; font-size: .68rem; }
         .compact .actions { gap: 5px; }
         .compact button.mode { min-height: 46px; padding: 5px 2px; border-radius: 8px; gap: 2px; }
         .compact button.mode ha-icon { --mdc-icon-size: 19px; }
@@ -180,8 +188,9 @@ class VeggaSectorCard extends HTMLElement {
           <div class="title">
             <div class="name">${this._escape(name)}</div>
             <div class="subtitle">Modo actual: ${this._escape(currentMode)}</div>
+            ${irrigating ? `<div class="irrigating">${this._escape(irrigationText)}</div>` : ""}
           </div>
-          <div class="status ${available ? "" : "unavailable"}">${available ? "Conectado" : "No disponible"}</div>
+          <div class="status ${available ? "" : "unavailable"}">${available ? (irrigating ? "En riego" : "Conectado") : "No disponible"}</div>
         </div>
         <div class="actions">
           ${MODES.map(
