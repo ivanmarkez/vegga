@@ -367,6 +367,15 @@ class VeggaApi:
             data, ("content", "meters", "data", "items", "results")
         )
 
+    async def get_conditioners(self) -> list[dict[str, Any]]:
+        """Return configured conditioners with their live A-5500 state."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request("GET", f"/units/{self.device_id}/conditioners")
+        return self._extract_nested_list(
+            data, ("content", "conditioners", "data", "items", "results")
+        )
+
     async def get_fertilizer_config(self) -> Any:
         """Return A-5500 fertilization sensor assignments."""
         if not self.device_id:

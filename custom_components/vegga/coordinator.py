@@ -184,6 +184,11 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                 meters = []
                 _LOGGER.debug("No se pudieron actualizar los caudalímetros VEGGA: %s", err)
             try:
+                conditioners = await self.api.get_conditioners()
+            except VeggaApiError as err:
+                conditioners = []
+                _LOGGER.debug("No se pudieron actualizar los condicionantes VEGGA: %s", err)
+            try:
                 fertilizer_config = await self.api.get_fertilizer_config()
             except VeggaApiError as err:
                 fertilizer_config = {}
@@ -317,6 +322,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                 "analogs": analogs,
                 "analog_formats": analog_formats,
                 "meters": meters,
+                "conditioners": conditioners,
                 "fertilizer_config": fertilizer_config,
                 "history": self._history,
                 "history_debug": dict(self.api.history_debug),
