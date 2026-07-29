@@ -9,7 +9,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .entity import VeggaEntity
+from .entity import VeggaEntity, VeggaSectorEntity
 
 
 def _number(item: dict[str, Any], fallback: int, keys: tuple[str, ...]) -> int:
@@ -62,6 +62,18 @@ async def async_setup_entry(
     data = coordinator.data or {}
     entities: list[ButtonEntity] = []
 
+    # Every sector mode change requires a deliberate second action.
+    for fallback, sector in enumerate(data.get("sectors", []), start=1):
+        number = sector.get("_agronic_number")
+        if not isinstance(number, int):
+            number = fallback
+        name = _name(
+            sector,
+            f"Sector {fallback}",
+            ("name", "description", "nombre", "sectorName", "sector_name", "label"),
+        )
+        entities.append(VeggaConfirmSectorModeButton(coordinator, number, name))
+
     # Program start/stop controls remain available.
     for fallback, program in enumerate(data.get("programs", []), start=1):
         number = _number(program, fallback, ("number", "program", "programNumber", "id"))
@@ -103,5 +115,53 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
             await self.coordinator.api.stop_program(self._number)
         self.coordinator.record_command(
             f"{'Iniciar' if self._start else 'Parar'} programa {self._item_name}"
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class VeggaConfirmSectorModeButton(VeggaSectorEntity, ButtonEntity):
+    """Explicitly confirm a previously staged sector mode change."""
+
+    _attr_icon = "mdi:shield-check"
+
+    def __init__(self, coordinator, sector_number: int, sector_name: str) -> None:
+        super().__init__(coordinator, sector_number, sector_name)
+        self._attr_name = "Confirmar cambio de modo"
+        self._attr_unique_id = (
+            f"{coordinator.api.device_id}_sector_{sector_number}_confirm_mode"
+        )
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.coordinator.pending_sector_mode(self._sector_number) is not None
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        return {
+            "modo_actual": self.coordinator.sector_mode(self._sector_number),
+            "cambio_pendiente": self.coordinator.pending_sector_mode(self._sector_number),
+        }
+
+    async def async_press(self) -> None:
+        option = self.coordinator.pending_sector_mode(self._sector_number)
+        if option is None:
+            return
+
+        if option == "Marcha manual":
+            await self.coordinator.api.start_sector(self._sector_number)
+        elif option == "Paro manual":
+            await self.coordinator.api.stop_sector(self._sector_number)
+        elif option == "Automático":
+            await self.coordinator.api.automatic_sector(self._sector_number)
+        else:
+            raise ValueError(f"Modo de sector no válido: {option}")
+
+        self.coordinator.record_sector_mode(self._sector_number, option)
+        self.coordinator.clear_pending_sector_mode(self._sector_number)
+        self.coordinator.record_command(
+            f"Sector {self._sector_device_name}: cambio confirmado a {option}"
         )
         await self.coordinator.async_request_refresh()

@@ -40,6 +40,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self.last_command: str | None = None
         self.last_command_at: datetime | None = None
         self.sector_modes: dict[int, str] = {}
+        self.pending_sector_modes: dict[int, str] = {}
         self._history: list[dict[str, Any]] = []
 
     @staticmethod
@@ -222,3 +223,20 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
     def record_sector_mode(self, sector_number: int, mode: str) -> None:
         self.sector_modes[sector_number] = mode
         self.async_update_listeners()
+    def pending_sector_mode(self, sector_number: int) -> str | None:
+        """Return a sector mode waiting for explicit confirmation."""
+        return self.pending_sector_modes.get(sector_number)
+
+    def set_pending_sector_mode(self, sector_number: int, mode: str) -> None:
+        """Stage a sector mode change without contacting VEGGA."""
+        if mode == self.sector_mode(sector_number):
+            self.pending_sector_modes.pop(sector_number, None)
+        else:
+            self.pending_sector_modes[sector_number] = mode
+        self.async_update_listeners()
+
+    def clear_pending_sector_mode(self, sector_number: int) -> None:
+        """Clear a staged sector mode after it has been applied."""
+        self.pending_sector_modes.pop(sector_number, None)
+        self.async_update_listeners()
+
