@@ -330,6 +330,43 @@ class VeggaApi:
             f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/io/outputs/DIGITAL",
         )
 
+    async def get_analog_sensors(self) -> list[dict[str, Any]]:
+        """Return configured analogue sensors, including their live value."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request_url(
+            "GET",
+            f"{API_BASE_URL}/units/{self.device_id}/analogs",
+            params={"page": 1, "limit": 120},
+        )
+        return self._extract_nested_list(
+            data, ("content", "analogs", "data", "items", "results")
+        )
+
+    async def get_analog_formats(self) -> list[dict[str, Any]]:
+        """Return the decimal and unit definitions used by analogue sensors."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request(
+            "GET", f"/units/{self.device_id}/analogs/formatsview"
+        )
+        return self._extract_nested_list(
+            data, ("content", "formats", "data", "items", "results")
+        )
+
+    async def get_meters(self) -> list[dict[str, Any]]:
+        """Return controller flow meters and their live readings."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        data = await self._request_url(
+            "GET",
+            f"{API_BASE_URL}/units/{self.device_id}/meters",
+            params={"operative": "false"},
+        )
+        return self._extract_nested_list(
+            data, ("content", "meters", "data", "items", "results")
+        )
+
     async def get_programs(self) -> list[dict[str, Any]]:
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")

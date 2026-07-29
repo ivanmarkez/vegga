@@ -79,6 +79,25 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                 irrigating_sectors = []
                 _LOGGER.debug("No se pudo actualizar el estado de riego VEGGA: %s", err)
 
+            # Sensor endpoints are optional on some Agrónic configurations.
+            # Keep each source independent so a missing probe or meter never
+            # makes irrigation controls unavailable.
+            try:
+                analogs = await self.api.get_analog_sensors()
+            except VeggaApiError as err:
+                analogs = []
+                _LOGGER.debug("No se pudieron actualizar los sensores analógicos VEGGA: %s", err)
+            try:
+                analog_formats = await self.api.get_analog_formats()
+            except VeggaApiError as err:
+                analog_formats = []
+                _LOGGER.debug("No se pudieron actualizar los formatos analógicos VEGGA: %s", err)
+            try:
+                meters = await self.api.get_meters()
+            except VeggaApiError as err:
+                meters = []
+                _LOGGER.debug("No se pudieron actualizar los caudalímetros VEGGA: %s", err)
+
             if self._history_due(now):
                 try:
                     # Keep the exact request shape that is confirmed to work in
@@ -198,7 +217,17 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                     _LOGGER.warning("No se pudo actualizar el histórico VEGGA: %s", err)
 
             self.last_successful_update = now
-            return {"programs": programs, "sectors": sectors, "irrigating_sectors": irrigating_sectors, "unit_status": unit_status, "history": self._history, "history_debug": dict(self.api.history_debug)}
+            return {
+                "programs": programs,
+                "sectors": sectors,
+                "irrigating_sectors": irrigating_sectors,
+                "unit_status": unit_status,
+                "analogs": analogs,
+                "analog_formats": analog_formats,
+                "meters": meters,
+                "history": self._history,
+                "history_debug": dict(self.api.history_debug),
+            }
         except VeggaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except VeggaApiError as err:
@@ -239,4 +268,3 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         """Clear a staged sector mode after it has been applied."""
         self.pending_sector_modes.pop(sector_number, None)
         self.async_update_listeners()
-

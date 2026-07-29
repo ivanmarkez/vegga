@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import re
+import unicodedata
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -106,6 +108,172 @@ def _sample_payload(value: Any, depth: int = 0) -> Any:
     return value
 
 
+def _normalized_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    return "".join(char for char in text if not unicodedata.combining(char)).casefold()
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = re.search(r"[-+]?\d+(?:[.,]\d+)?", value)
+        if match:
+            try:
+                return float(match.group().replace(",", "."))
+            except ValueError:
+                pass
+    return None
+
+
+def _analog_format(data: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    formats = data.get("analog_formats", [])
+    try:
+        format_id = int(row.get("formatId"))
+    except (TypeError, ValueError):
+        return {}
+    if 1 <= format_id <= len(formats) and isinstance(formats[format_id - 1], dict):
+        return formats[format_id - 1]
+    for item in formats:
+        if not isinstance(item, dict):
+            continue
+        pk = item.get("pk")
+        candidates = (item.get("id"), pk.get("id") if isinstance(pk, dict) else None)
+        if format_id in candidates:
+            return item
+    return {}
+
+
+def _analog_unit(fmt: dict[str, Any]) -> str | None:
+    for key in ("units", "unit", "suffix", "symbol"):
+        if fmt.get(key):
+            return str(fmt[key]).strip()
+    pattern = fmt.get("format")
+    if isinstance(pattern, str):
+        parts = pattern.strip().split()
+        if len(parts) > 1:
+            return parts[-1]
+    return None
+
+
+def _analog_row(data: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    for row in data.get("analogs", []):
+        if not isinstance(row, dict) or row.get("input") == 0:
+            continue
+        fmt = _analog_format(data, row)
+        label = " ".join(
+            str(row.get(key, "")) for key in ("name", "description", "label", "sensorName")
+        )
+        haystack = f"{_normalized_text(label)} {_normalized_text(_analog_unit(fmt))}"
+        if kind == "ph" and re.search(r"(^|[^a-z])ph([^a-z]|$)", haystack):
+            return row, fmt
+        if kind == "ec" and (
+            "conductividad" in haystack
+            or "conductivity" in haystack
+            or re.search(r"(^|[^a-z])(ce|ec|ms)([^a-z]|$)", haystack)
+        ):
+            return row, fmt
+    return None
+
+
+def _analog_value(row: dict[str, Any], fmt: dict[str, Any]) -> float | None:
+    for key in ("value", "currentValue", "formattedValue", "reading"):
+        value = _number(row.get(key))
+        if value is not None:
+            return value
+    value = _number(row.get("xValue"))
+    if value is None:
+        return None
+    try:
+        decimals = int(fmt.get("decimals", 0))
+    except (TypeError, ValueError):
+        decimals = 0
+    return value / (10 ** decimals)
+
+
+def _meter_row(data: dict[str, Any]) -> dict[str, Any] | None:
+    rows = [row for row in data.get("meters", []) if isinstance(row, dict)]
+    configured = [row for row in rows if row.get("input") not in (None, 0, "0")]
+    return (configured or rows or [None])[0]
+
+
+class VeggaAnalogSensor(VeggaEntity, SensorEntity):
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, kind: str) -> None:
+        super().__init__(coordinator)
+        self._kind = kind
+        self._attr_name = "pH" if kind == "ph" else "Conductividad"
+        self._attr_icon = "mdi:ph" if kind == "ph" else "mdi:flash"
+        self._attr_unique_id = f"{coordinator.api.device_id}_{kind}"
+
+    def _source(self):
+        return _analog_row(self.coordinator.data or {}, self._kind)
+
+    @property
+    def native_value(self) -> float | None:
+        source = self._source()
+        return _analog_value(*source) if source else None
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        source = self._source()
+        unit = _analog_unit(source[1]) if source else None
+        return unit or ("pH" if self._kind == "ph" else "mS")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        source = self._source()
+        return {
+            "source": "VEGGA analogs",
+            "input": source[0].get("input") if source else None,
+            "format_id": source[0].get("formatId") if source else None,
+            "raw_value": source[0].get("xValue") if source else None,
+        }
+
+
+class VeggaFlowMeterSensor(VeggaEntity, SensorEntity):
+    _attr_name = "Caudalímetro"
+    _attr_icon = "mdi:water-pump"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.api.device_id}_flow_meter"
+
+    @property
+    def native_value(self) -> float | None:
+        row = _meter_row(self.coordinator.data or {})
+        if not row:
+            return None
+        direct = _number(row.get("value"))
+        if direct is not None:
+            return direct
+        raw = _number(row.get("xFlow"))
+        return raw / 100 if raw is not None else None
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        row = _meter_row(self.coordinator.data or {}) or {}
+        units = {0: "m³/h", 1: "L/h", 2: "L/s"}
+        try:
+            return units.get(int(row.get("flowFormat")), "m³/h")
+        except (TypeError, ValueError):
+            return "m³/h"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        row = _meter_row(self.coordinator.data or {}) or {}
+        return {
+            "source": "VEGGA meters",
+            "input": row.get("input"),
+            "active": row.get("xActive", row.get("active")),
+            "raw_flow": row.get("xFlow"),
+        }
+
+
 def _find_active_refs(payload: Any, kind: str) -> list[dict[str, Any]]:
     """Best-effort extraction of active program/sector references."""
     results: list[dict[str, Any]] = []
@@ -163,6 +331,9 @@ async def async_setup_entry(
         VeggaLastHistoryUpdateSensor(coordinator),
         VeggaHistoryDiagnosticSensor(coordinator),
         VeggaLiveStatusDiagnosticSensor(coordinator),
+        VeggaAnalogSensor(coordinator, "ph"),
+        VeggaAnalogSensor(coordinator, "ec"),
+        VeggaFlowMeterSensor(coordinator),
     ]
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
         number = _sector_number(sector, fallback)
@@ -324,6 +495,11 @@ class VeggaLiveStatusDiagnosticSensor(VeggaEntity, SensorEntity):
             "active_sector_candidates": _find_active_refs(payload, "sector"),
             "irrigating_sector_row_count": len(runtime) if isinstance(runtime, list) else 0,
             "irrigating_sector_sample": _sample_payload(runtime),
+            "analog_sensor_count": len((self.coordinator.data or {}).get("analogs", [])),
+            "analog_sensor_sample": _sample_payload((self.coordinator.data or {}).get("analogs", [])),
+            "analog_format_sample": _sample_payload((self.coordinator.data or {}).get("analog_formats", [])),
+            "meter_count": len((self.coordinator.data or {}).get("meters", [])),
+            "meter_sample": _sample_payload((self.coordinator.data or {}).get("meters", [])),
             "response_sample": _sample_payload(payload),
         }
 
