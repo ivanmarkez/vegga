@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
@@ -12,8 +11,6 @@ from .const import DOMAIN
 from .entity import VeggaSectorEntity
 
 OPTIONS = ["Automático", "Marcha manual", "Paro manual"]
-COMMAND_VERIFY_ATTEMPTS = 4
-COMMAND_VERIFY_DELAY_SECONDS = 2
 
 
 def _sector_name(sector: dict[str, Any], fallback: int) -> str:
@@ -59,10 +56,8 @@ class VeggaSectorModeSelect(VeggaSectorEntity, SelectEntity):
 
         if option == "Marcha manual":
             await self.coordinator.api.start_sector(self._sector_number)
-            await self._verify_live_state(expected=True, command=option)
         elif option == "Paro manual":
             await self.coordinator.api.stop_sector(self._sector_number)
-            await self._verify_live_state(expected=False, command=option)
         else:
             await self.coordinator.api.automatic_sector(self._sector_number)
 
@@ -71,23 +66,3 @@ class VeggaSectorModeSelect(VeggaSectorEntity, SelectEntity):
             f"Sector {self._sector_device_name}: cambio a {option}"
         )
         await self.coordinator.async_request_refresh()
-
-    async def _verify_live_state(self, *, expected: bool, command: str) -> None:
-        """Require VEGGA's live endpoint to confirm a start/stop command."""
-        last_state = not expected
-        for attempt in range(COMMAND_VERIFY_ATTEMPTS):
-            if attempt:
-                await asyncio.sleep(COMMAND_VERIFY_DELAY_SECONDS)
-            last_state = await self.coordinator.api.is_sector_irrigating(
-                self._sector_number
-            )
-            if last_state is expected:
-                return
-
-        expected_text = "en riego" if expected else "detenido"
-        observed_text = "en riego" if last_state else "no riego"
-        raise RuntimeError(
-            f"VEGGA no confirmó {command} para el sector "
-            f"{self._sector_number}: se esperaba {expected_text} y se observó "
-            f"{observed_text}"
-        )

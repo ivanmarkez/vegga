@@ -51,10 +51,13 @@ El frontend muestra el popup y, además, la integración conserva la protección
 
 ## 0.4.26
 
-- Marcha manual y Paro manual consultan el estado vivo de VEGGA después de
-  enviar la orden.
-- La integración solo actualiza el modo mostrado cuando VEGGA confirma el
-  resultado; si no lo confirma tras cuatro intentos, Home Assistant muestra un
-  error explícito.
-- Se corrige la detección de sectores activos para evitar falsos positivos
-  entre sectores consecutivos o registros sin indicador de riego.
+- Mantiene sin cambios los comandos Automático, Marcha manual y Paro manual de
+  la versión 0.4.25.
+- Corrige el testigo de riego resolviendo los identificadores internos que
+  VEGGA devuelve en el estado vivo contra los sectores configurados.
+- El sensor `Sectores activos` muestra el número de sectores en marcha y expone
+  sus nombres en `active_sector_names`.
+- El sensor binario `Riego activo` de cada sector utiliza la misma resolución
+  de identificadores.
+- Amplía el sensor de diagnóstico en tiempo real con una muestra de las filas
+  devueltas por el endpoint `irrigation=true`.

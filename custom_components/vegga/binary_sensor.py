@@ -104,7 +104,7 @@ class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
         runtime = data.get("irrigating_sectors", [])
-        if sector_is_irrigating(runtime, self._number):
+        if sector_is_irrigating(runtime, data.get("sectors", []), self._number):
             return True
         live_numbers = _live_sector_numbers(data.get("unit_status"))
         if self._number in live_numbers:

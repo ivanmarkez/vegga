@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .entity import VeggaEntity, VeggaSectorEntity
 from .history import analyse_sector, sector_volume_for_date
+from .runtime import active_sector_numbers
 
 
 def _program_name(program: dict[str, Any], fallback: int) -> str:
@@ -266,19 +267,8 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
         runtime = data.get("irrigating_sectors", [])
-        numbers = [
-            _runtime_sector_number(item, index)
-            for index, item in enumerate(runtime, start=1)
-            if isinstance(item, dict) and (_runtime_program_number(item) > 0 or _is_active(item))
-        ]
-        # The endpoint is already filtered with irrigation=true. Some firmware
-        # versions omit an explicit active flag but still return only active rows.
-        if runtime and not numbers:
-            numbers = [
-                _runtime_sector_number(item, index)
-                for index, item in enumerate(runtime, start=1)
-                if isinstance(item, dict)
-            ]
+        sectors = data.get("sectors", [])
+        numbers = sorted(active_sector_numbers(runtime, sectors))
         if not numbers:
             refs = _find_active_refs(data.get("unit_status"), "sector")
             numbers = []
@@ -287,7 +277,6 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
                     numbers.append(int(item.get("reference")))
                 except (TypeError, ValueError):
                     pass
-        sectors = data.get("sectors", [])
         names: list[str] = []
         for number in numbers:
             if 1 <= number <= len(sectors):
@@ -323,10 +312,13 @@ class VeggaLiveStatusDiagnosticSensor(VeggaEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         payload = (self.coordinator.data or {}).get("unit_status")
+        runtime = (self.coordinator.data or {}).get("irrigating_sectors", [])
         return {
             "top_level_keys": list(payload.keys()) if isinstance(payload, dict) else [],
             "active_program_candidates": _find_active_refs(payload, "program"),
             "active_sector_candidates": _find_active_refs(payload, "sector"),
+            "irrigating_sector_row_count": len(runtime) if isinstance(runtime, list) else 0,
+            "irrigating_sector_sample": _sample_payload(runtime),
             "response_sample": _sample_payload(payload),
         }
 
