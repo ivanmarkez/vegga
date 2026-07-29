@@ -1,9 +1,11 @@
-# VEGGA Agrónic v0.4.18
+# VEGGA Agrónic para Home Assistant
 
-Añade control correcto de tres estados para cada sector del Agrónic A-5500:
+Integración HACS para equipos VEGGA / Agrónic.
 
-- Automático (acción VEGGA 10)
-- Marcha manual (acción VEGGA 9)
-- Paro manual (acción VEGGA 8)
+## Versión 0.4.20
 
-Cada sector dispone de una entidad `select` de modo y de tres botones independientes.
+- Control de cada sector mediante un único selector de tres estados: **Automático**, **Marcha manual** y **Paro manual**.
+- Eliminados los botones duplicados de sector.
+- Limpieza automática de las entidades antiguas «Iniciar riego», «Parar riego», «Marcha manual», «Paro manual» y «Automático».
+- Se mantienen los botones de inicio y parada de programas.
+- Icono y versión sincronizados para Home Assistant y HACS.
