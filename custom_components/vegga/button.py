@@ -62,7 +62,7 @@ def _format_remaining(value: Any, unit: Any) -> tuple[int | None, str | None]:
         return None, None
 
     # VEGGA A-5500: 0 = hours/minutes; 3 = minutes/seconds.
-    if unit_number in (0, 4):
+    if unit_number in (0, 4, 16):
         rounded_minutes = (seconds + 59) // 60
         hours, minutes = divmod(rounded_minutes, 60)
         return seconds, f"{hours:02d}:{minutes:02d}"
@@ -98,7 +98,7 @@ def _active_xvalue_rows(value: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             return
         if (
-            item.get("xValue") is not None
+            (item.get("xValor") is not None or item.get("xValue") is not None)
             and _integer(item.get("xState")) == 1
         ):
             found.append(item)
@@ -108,6 +108,39 @@ def _active_xvalue_rows(value: Any) -> list[dict[str, Any]]:
 
     walk(value)
     return found
+
+
+def _pending_value(row: dict[str, Any]) -> Any:
+    """A-5500 uses xValor; other Agrónic models commonly use xValue."""
+    return row.get("xValor") if row.get("xValor") is not None else row.get("xValue")
+
+
+def _program_progress(program: dict[str, Any]) -> dict[str, Any]:
+    """Return the same sector progress shown in VEGGA's A-5500 program grid."""
+    rows = _active_xvalue_rows(program)
+    if not rows:
+        return {}
+    row = rows[0]
+    unit = _program_unit(row)
+    if unit is None:
+        unit = _program_unit(program)
+    total = _integer(row.get("value"))
+    pending = _integer(_pending_value(row))
+    if total is None or pending is None:
+        return {}
+    elapsed = max(0, total - pending)
+    _, total_display = _format_remaining(total, unit)
+    _, elapsed_display = _format_remaining(elapsed, unit)
+    _, pending_display = _format_remaining(pending, unit)
+    return {
+        "sector": _integer(row.get("sector")),
+        "total_seconds": total,
+        "elapsed_seconds": elapsed,
+        "remaining_seconds": pending,
+        "total_time": total_display,
+        "elapsed_time": elapsed_display,
+        "remaining_time": pending_display,
+    }
 
 
 def _remaining_time(
@@ -120,7 +153,12 @@ def _remaining_time(
 
     # A-5500 program rows expose the current pending value directly. This is
     # the normal fallback when the list response contains ``subprograms: null``.
-    direct = _format_remaining(program.get("xValue"), program_unit)
+    direct_value = (
+        program.get("xValor")
+        if program.get("xValor") is not None
+        else program.get("xValue")
+    )
+    direct = _format_remaining(direct_value, program_unit)
     if direct[1] is not None:
         return direct
 
@@ -145,7 +183,7 @@ def _remaining_time(
         if isinstance(active_subprogram, dict):
             active_unit = _program_unit(active_subprogram)
             formatted = _format_remaining(
-                active_subprogram.get("xValue"),
+                _pending_value(active_subprogram),
                 active_unit if active_unit is not None else program_unit,
             )
             if formatted[1] is not None:
@@ -173,7 +211,7 @@ def _remaining_time(
     for active_row in _active_xvalue_rows(program):
         row_unit = _program_unit(active_row)
         formatted = _format_remaining(
-            active_row.get("xValue"),
+            _pending_value(active_row),
             row_unit if row_unit is not None else program_unit,
         )
         if formatted[1] is not None:
@@ -190,7 +228,7 @@ def _remaining_time(
             continue
         sector_unit = _program_unit(sector)
         formatted = _format_remaining(
-            sector.get("xValue"),
+            _pending_value(sector),
             sector_unit if sector_unit is not None else program_unit,
         )
         if formatted[1] is not None:
@@ -315,12 +353,18 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
             if active and live_program
             else (None, None)
         )
+        progress = _program_progress(live_program) if active and live_program else {}
         return {
             "program_number": self._number,
             "program_name": self._item_name,
             "active": active,
-            "remaining_seconds": seconds,
-            "remaining_time": display,
+            "remaining_seconds": progress.get("remaining_seconds", seconds),
+            "remaining_time": progress.get("remaining_time", display),
+            "active_sector_number": progress.get("sector"),
+            "elapsed_seconds": progress.get("elapsed_seconds"),
+            "elapsed_time": progress.get("elapsed_time"),
+            "total_seconds": progress.get("total_seconds"),
+            "total_time": progress.get("total_time"),
             "live_detail_loaded": isinstance(detail, dict),
             "live_detail_has_program_sector": bool(
                 isinstance(detail, dict)
@@ -332,7 +376,16 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
             "live_active_xvalue_rows": [
                 {
                     key: row.get(key)
-                    for key in ("xState", "xValue", "unit", "irrigUnits", "irrigUnitsSubp")
+                    for key in (
+                        "sector",
+                        "xState",
+                        "value",
+                        "xValor",
+                        "xValue",
+                        "unit",
+                        "irrigUnits",
+                        "irrigUnitsSubp",
+                    )
                     if row.get(key) is not None
                 }
                 for row in (_active_xvalue_rows(live_program) if live_program else [])[:3]

@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.50";
+const CARD_VERSION = "0.4.51";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -439,6 +439,9 @@ class VeggaProgramCard extends HTMLElement {
     const stop = this._hass?.states?.[this._config.stop_entity];
     const active = Boolean(start?.attributes?.active);
     const remaining = start?.attributes?.remaining_time;
+    const elapsed = start?.attributes?.elapsed_time;
+    const total = start?.attributes?.total_time;
+    const activeSector = start?.attributes?.active_sector_number;
     const unavailable =
       !start || !stop || start.state === "unavailable" || stop.state === "unavailable";
     this.shadowRoot.innerHTML = `
@@ -469,8 +472,10 @@ class VeggaProgramCard extends HTMLElement {
           <span class="dot"></span>
           <span>${
             active
-              ? remaining
-                ? `En marcha · Restante ${this._escape(remaining)}`
+              ? elapsed && total
+                ? `En marcha · S${this._escape(activeSector || "?")} · ${this._escape(elapsed)} / ${this._escape(total)}${remaining ? ` · Quedan ${this._escape(remaining)}` : ""}`
+                : remaining
+                  ? `En marcha · Restante ${this._escape(remaining)}`
                 : "En marcha · Tiempo no disponible"
               : "Detenido"
           }</span>
