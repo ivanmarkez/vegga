@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.23";
+const CARD_VERSION = "0.4.38";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -276,11 +276,91 @@ class VeggaSectorCardEditor extends HTMLElement {
   }
 }
 
+class VeggaSectorsGrid extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+  }
+
+  static getStubConfig() {
+    return { title: "Control de sectores" };
+  }
+
+  setConfig(config) {
+    this._config = { title: "Control de sectores", ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  _sectorEntities() {
+    const requiredModes = MODES.map((mode) => mode.value);
+    return Object.entries(this._hass?.states || {})
+      .filter(([entityId, stateObj]) => {
+        if (!entityId.startsWith("select.")) return false;
+        const options = stateObj?.attributes?.options;
+        return Array.isArray(options) && requiredModes.every((mode) => options.includes(mode));
+      })
+      .sort(([, left], [, right]) =>
+        String(left?.attributes?.friendly_name || "").localeCompare(
+          String(right?.attributes?.friendly_name || ""),
+          "es",
+          { numeric: true, sensitivity: "base" }
+        )
+      );
+  }
+
+  getCardSize() {
+    return Math.max(3, Math.ceil(this._sectorEntities().length / 3) * 3);
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._hass) return;
+    const entities = this._sectorEntities();
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; padding: 12px; }
+        .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 4px 16px; }
+        h1 { margin: 0; color: var(--primary-text-color); font-size: 1.55rem; }
+        .count { color: var(--secondary-text-color); }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; align-items: start; }
+        .empty { padding: 24px; border-radius: 14px; color: var(--secondary-text-color); background: var(--card-background-color); }
+        @media (max-width: 430px) {
+          :host { padding: 6px; }
+          .grid { grid-template-columns: 1fr; gap: 9px; }
+          h1 { font-size: 1.25rem; }
+        }
+      </style>
+      <div class="heading">
+        <h1>${String(this._config.title || "Control de sectores")}</h1>
+        <span class="count">${entities.length} sectores</span>
+      </div>
+      <div class="grid"></div>
+      ${entities.length ? "" : '<div class="empty">No se encontraron controles de sector VEGGA.</div>'}
+    `;
+    const grid = this.shadowRoot.querySelector(".grid");
+    entities.forEach(([entityId]) => {
+      const card = document.createElement("vegga-sector-card");
+      card.setConfig({ entity: entityId });
+      card.hass = this._hass;
+      grid.appendChild(card);
+    });
+  }
+}
+
 if (!customElements.get("vegga-sector-card")) {
   customElements.define("vegga-sector-card", VeggaSectorCard);
 }
 if (!customElements.get("vegga-sector-card-editor")) {
   customElements.define("vegga-sector-card-editor", VeggaSectorCardEditor);
+}
+if (!customElements.get("vegga-sectors-grid")) {
+  customElements.define("vegga-sectors-grid", VeggaSectorsGrid);
 }
 
 window.customCards = window.customCards || [];
@@ -293,6 +373,15 @@ if (!window.customCards.some((card) => card.type === "vegga-sector-card")) {
     documentationURL: "https://app.veggadigital.com/",
     getEntitySuggestion: (_hass, entityId) =>
       entityId?.startsWith("select.") ? { type: "custom:vegga-sector-card", entity: entityId } : null,
+  });
+}
+if (!window.customCards.some((card) => card.type === "vegga-sectors-grid")) {
+  window.customCards.push({
+    type: "vegga-sectors-grid",
+    name: "VEGGA - Todos los sectores",
+    description: "Descubre y muestra todos los controles de sector VEGGA.",
+    preview: true,
+    documentationURL: "https://app.veggadigital.com/",
   });
 }
 
