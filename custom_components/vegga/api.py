@@ -10,6 +10,7 @@ from typing import Any
 from aiohttp import ClientError, ClientResponseError, ClientSession
 
 from .const import API_BASE_URL, CLIENT_ID, CORE_BASE_URL, HISTORY_BASE_URL, LOGIN_URL, OAUTH_SCOPE
+from .runtime import sector_is_irrigating
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -400,6 +401,15 @@ class VeggaApi:
         if sectors or isinstance(data, list):
             return [dict(item) for item in sectors]
         return []
+
+    async def is_sector_irrigating(self, sector_number: int) -> bool:
+        """Read back the live state of one sector after a manual command."""
+        if sector_number < 1:
+            raise ValueError("El número de sector debe ser mayor que cero")
+        return sector_is_irrigating(
+            await self.get_irrigating_sectors(),
+            sector_number,
+        )
 
     async def get_sectors(self) -> list[dict[str, Any]]:
         """Return irrigation sectors configured in the controller."""

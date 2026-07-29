@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.25
+# VEGGA Agrónic para Home Assistant — v0.4.26
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -48,3 +48,13 @@ El frontend muestra el popup y, además, la integración conserva la protección
 - Requiere al menos 3 muestras equivalentes para evaluar.
 - Aviso desde ±20 % y alarma desde ±30 %.
 - Los sensores muestran programa, método y número de muestras usados en la comparación.
+
+## 0.4.26
+
+- Marcha manual y Paro manual consultan el estado vivo de VEGGA después de
+  enviar la orden.
+- La integración solo actualiza el modo mostrado cuando VEGGA confirma el
+  resultado; si no lo confirma tras cuatro intentos, Home Assistant muestra un
+  error explícito.
+- Se corrige la detección de sectores activos para evitar falsos positivos
+  entre sectores consecutivos o registros sin indicador de riego.
