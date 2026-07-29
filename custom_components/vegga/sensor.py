@@ -178,10 +178,14 @@ def _find_nested_value(value: Any, wanted_key: str) -> Any:
 def _analog_row(data: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
     # This is the selection rule used by VEGGA for A-5500: checkCE/checkPH
     # contain the one-based analogue input assigned to fertilization control.
-    config_key = "checkPH" if kind == "ph" else "checkCE"
-    configured_input = _find_nested_value(data.get("unit_status"), config_key)
-    if configured_input in (None, "", 0, "0"):
-        configured_input = _find_nested_value(data.get("fertilizer_config"), config_key)
+    config_keys = ("checkPH", "securityPH") if kind == "ph" else ("checkCE", "securityCE")
+    configured_input = None
+    for config_key in config_keys:
+        configured_input = _find_nested_value(data.get("unit_status"), config_key)
+        if configured_input in (None, "", 0, "0"):
+            configured_input = _find_nested_value(data.get("fertilizer_config"), config_key)
+        if configured_input not in (None, "", 0, "0"):
+            break
     try:
         configured_input = int(configured_input)
     except (TypeError, ValueError):
@@ -238,6 +242,25 @@ def _analog_value(row: dict[str, Any], fmt: dict[str, Any]) -> float | None:
     return value / (10 ** decimals)
 
 
+def _ph_regulation_value(data: dict[str, Any]) -> float | None:
+    """Return the live pH value exposed by A-5500 regulation."""
+    fertilizer = _find_nested_value(data.get("unit_status"), "fertilizer")
+    if not isinstance(fertilizer, dict):
+        fertilizer = _find_nested_value(data.get("fertilizer_config"), "fertilizer")
+    if not isinstance(fertilizer, dict):
+        return None
+    regulations = fertilizer.get("pidRegulation")
+    if not isinstance(regulations, list) or len(regulations) < 2:
+        return None
+    ph_regulation = regulations[1]
+    if not isinstance(ph_regulation, dict):
+        return None
+    value = _number(ph_regulation.get("xValue"))
+    if value is None:
+        return None
+    return value / 10 if abs(value) > 14 else value
+
+
 def _meter_row(data: dict[str, Any]) -> dict[str, Any] | None:
     rows = [row for row in data.get("meters", []) if isinstance(row, dict)]
     configured = [row for row in rows if row.get("input") not in (None, 0, "0")]
@@ -260,7 +283,11 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
     @property
     def native_value(self) -> float | None:
         source = self._source()
-        return _analog_value(*source) if source else None
+        if source:
+            value = _analog_value(*source)
+            if value is not None:
+                return value
+        return _ph_regulation_value(self.coordinator.data or {}) if self._kind == "ph" else None
 
     @property
     def native_unit_of_measurement(self) -> str | None:
@@ -271,17 +298,24 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         source = self._source()
-        config_key = "checkPH" if self._kind == "ph" else "checkCE"
-        configured_input = _find_nested_value(
-            (self.coordinator.data or {}).get("unit_status"), config_key
-        )
-        if configured_input in (None, "", 0, "0"):
+        config_keys = ("checkPH", "securityPH") if self._kind == "ph" else ("checkCE", "securityCE")
+        configured_input = None
+        configured_from = None
+        for config_key in config_keys:
             configured_input = _find_nested_value(
-                (self.coordinator.data or {}).get("fertilizer_config"), config_key
+                (self.coordinator.data or {}).get("unit_status"), config_key
             )
+            if configured_input in (None, "", 0, "0"):
+                configured_input = _find_nested_value(
+                    (self.coordinator.data or {}).get("fertilizer_config"), config_key
+                )
+            if configured_input not in (None, "", 0, "0"):
+                configured_from = config_key
+                break
         return {
             "source": "VEGGA analogs",
             "configured_analog": configured_input,
+            "configured_from": configured_from,
             "input": source[0].get("input") if source else None,
             "analog_id": (
                 source[0].get("pk", {}).get("id")
@@ -290,6 +324,11 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
             ),
             "format_id": source[0].get("formatId") if source else None,
             "raw_value": source[0].get("xValue") if source else None,
+            "regulation_value": (
+                _ph_regulation_value(self.coordinator.data or {})
+                if self._kind == "ph"
+                else None
+            ),
             "analog_count": len((self.coordinator.data or {}).get("analogs", [])),
         }
 
