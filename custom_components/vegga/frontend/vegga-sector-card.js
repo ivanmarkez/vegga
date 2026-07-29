@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.22";
+const CARD_VERSION = "0.4.23";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -11,8 +11,6 @@ class VeggaSectorCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config = null;
     this._hass = null;
-    this._confirmEntity = null;
-    this._registryLookupStarted = false;
     this._selectedMode = null;
     this._busy = false;
     this._message = "";
@@ -35,17 +33,12 @@ class VeggaSectorCard extends HTMLElement {
       throw new Error("La entidad principal debe pertenecer al dominio select.");
     }
     this._config = { ...config };
-    this._confirmEntity = config.confirm_entity || null;
-    this._registryLookupStarted = false;
     this._render();
   }
 
   set hass(hass) {
     this._hass = hass;
     this._render();
-    if (!this._confirmEntity && !this._registryLookupStarted) {
-      this._resolveConfirmEntity();
-    }
   }
 
   getCardSize() {
@@ -54,33 +47,6 @@ class VeggaSectorCard extends HTMLElement {
 
   getGridOptions() {
     return { rows: 3, columns: 6, min_rows: 3, min_columns: 4 };
-  }
-
-  async _resolveConfirmEntity() {
-    if (!this._hass || !this._config?.entity) return;
-    this._registryLookupStarted = true;
-    try {
-      const entries = await this._hass.callWS({ type: "config/entity_registry/list" });
-      const selectEntry = entries.find((entry) => entry.entity_id === this._config.entity);
-      if (!selectEntry) return;
-
-      const candidates = entries.filter(
-        (entry) =>
-          entry.domain === "button" &&
-          entry.platform === "vegga" &&
-          entry.device_id === selectEntry.device_id
-      );
-
-      const match = candidates.find((entry) =>
-        String(entry.unique_id || "").endsWith("_confirm_mode")
-      );
-      if (match) {
-        this._confirmEntity = match.entity_id;
-        this._render();
-      }
-    } catch (error) {
-      console.warn("VEGGA: no se pudo localizar el botón de confirmación", error);
-    }
   }
 
   _entityState() {
@@ -115,14 +81,6 @@ class VeggaSectorCard extends HTMLElement {
 
   async _confirmChange() {
     if (!this._hass || !this._selectedMode || this._busy) return;
-    if (!this._confirmEntity) {
-      this._message =
-        "No encuentro el botón de confirmación. Indícalo en confirm_entity al configurar la tarjeta.";
-      this._render();
-      this.shadowRoot.querySelector("dialog")?.showModal();
-      return;
-    }
-
     this._busy = true;
     this._message = "Enviando orden…";
     const targetMode = this._selectedMode;
@@ -134,10 +92,6 @@ class VeggaSectorCard extends HTMLElement {
         entity_id: this._config.entity,
         option: targetMode,
       });
-      await this._hass.callService("button", "press", {
-        entity_id: this._confirmEntity,
-      });
-
       this._busy = false;
       this._selectedMode = null;
       this._message = "";
@@ -298,7 +252,6 @@ class VeggaSectorCardEditor extends HTMLElement {
   _render() {
     if (!this.shadowRoot) return;
     const selects = Object.keys(this._hass?.states || {}).filter((id) => id.startsWith("select.") && id.includes("sector"));
-    const buttons = Object.keys(this._hass?.states || {}).filter((id) => id.startsWith("button.") && id.includes("confirmar"));
     this.shadowRoot.innerHTML = `
       <style>
         .field { margin: 14px 0; }
@@ -314,20 +267,11 @@ class VeggaSectorCardEditor extends HTMLElement {
         </select>
       </div>
       <div class="field">
-        <label>Botón de confirmación (opcional)</label>
-        <select id="confirm_entity">
-          <option value="">Detección automática</option>
-          ${buttons.map((id) => `<option value="${id}" ${this._config.confirm_entity === id ? "selected" : ""}>${id}</option>`).join("")}
-        </select>
-        <div class="hint">Normalmente se detecta automáticamente por dispositivo.</div>
-      </div>
-      <div class="field">
         <label>Nombre personalizado (opcional)</label>
         <input id="name" value="${this._config.name || ""}" placeholder="Sector 1 - Frutales">
       </div>
     `;
     this.shadowRoot.querySelector("#entity")?.addEventListener("change", (event) => this._valueChanged("entity", event.target.value));
-    this.shadowRoot.querySelector("#confirm_entity")?.addEventListener("change", (event) => this._valueChanged("confirm_entity", event.target.value));
     this.shadowRoot.querySelector("#name")?.addEventListener("change", (event) => this._valueChanged("name", event.target.value.trim()));
   }
 }

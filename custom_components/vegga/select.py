@@ -50,16 +50,19 @@ class VeggaSectorModeSelect(VeggaSectorEntity, SelectEntity):
         return self.coordinator.sector_mode(self._sector_number)
 
     async def async_select_option(self, option: str) -> None:
-        """Prepare a mode change without sending it to the controller.
-
-        A separate confirmation button is deliberately required so an
-        accidental click in Home Assistant cannot start, stop or unblock a
-        sector immediately.
-        """
+        """Apply the selected sector mode to the Agrónic controller."""
         if option not in OPTIONS:
             raise ValueError(f"Modo de sector no válido: {option}")
 
-        self.coordinator.set_pending_sector_mode(self._sector_number, option)
+        if option == "Marcha manual":
+            await self.coordinator.api.start_sector(self._sector_number)
+        elif option == "Paro manual":
+            await self.coordinator.api.stop_sector(self._sector_number)
+        else:
+            await self.coordinator.api.automatic_sector(self._sector_number)
+
+        self.coordinator.record_sector_mode(self._sector_number, option)
         self.coordinator.record_command(
-            f"Sector {self._sector_device_name}: cambio pendiente a {option}"
+            f"Sector {self._sector_device_name}: cambio a {option}"
         )
+        await self.coordinator.async_request_refresh()
