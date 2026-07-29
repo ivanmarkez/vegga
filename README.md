@@ -1,10 +1,9 @@
-# VEGGA Agrónic v0.4.16
+# VEGGA Agrónic v0.4.18
 
-Versión temporal de diagnóstico. Registra una vez tras reiniciar Home Assistant:
+Añade control correcto de tres estados para cada sector del Agrónic A-5500:
 
-- Estado general del controlador.
-- Entradas analógicas.
-- Entradas digitales.
-- Salidas digitales.
+- Automático (acción VEGGA 10)
+- Marcha manual (acción VEGGA 9)
+- Paro manual (acción VEGGA 8)
 
-Buscar en los registros: `VEGGA DIAGNÓSTICO ENTRADAS Y SALIDAS`.
+Cada sector dispone de una entidad `select` de modo y de tres botones independientes.

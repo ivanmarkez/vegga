@@ -605,5 +605,13 @@ class VeggaApi:
         return await self.manual_action(9, sector_number - 1)
 
     async def stop_sector(self, sector_number: int) -> Any:
-        """Stop a sector manually. HAR: action 8, zero-based parameter1."""
+        """Force a sector to manual stop. HAR: action 8, zero-based parameter1."""
         return await self.manual_action(8, sector_number - 1)
+
+    async def automatic_sector(self, sector_number: int) -> Any:
+        """Return a sector to automatic program control.
+
+        Captured from the VEGGA web application: action 10 with a zero-based
+        sector number in ``parameter1``.
+        """
+        return await self.manual_action(10, sector_number - 1)

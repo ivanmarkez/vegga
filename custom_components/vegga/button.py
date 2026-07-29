@@ -43,7 +43,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     for fallback, sector in enumerate(data.get("sectors", []), start=1):
         number = sector.get("_agronic_number") if isinstance(sector.get("_agronic_number"), int) else fallback
         name = _name(sector, f"Sector {fallback}", ("name", "description", "nombre", "sectorName"))
-        entities.extend((VeggaSectorButton(coordinator, number, name, True), VeggaSectorButton(coordinator, number, name, False)))
+        entities.extend((
+            VeggaSectorButton(coordinator, number, name, "Marcha manual"),
+            VeggaSectorButton(coordinator, number, name, "Paro manual"),
+            VeggaSectorButton(coordinator, number, name, "Automático"),
+        ))
 
     async_add_entities(entities)
 
@@ -67,18 +71,34 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
 
 
 class VeggaSectorButton(VeggaSectorEntity, ButtonEntity):
-    def __init__(self, coordinator, sector_number: int, sector_name: str, start: bool) -> None:
+    def __init__(self, coordinator, sector_number: int, sector_name: str, mode: str) -> None:
         super().__init__(coordinator, sector_number, sector_name)
-        self._number, self._item_name, self._start = sector_number, sector_name, start
-        operation = "start" if start else "stop"
-        self._attr_name = "Iniciar riego" if start else "Parar riego"
+        self._number = sector_number
+        self._item_name = sector_name
+        self._mode = mode
+        operation = {
+            "Marcha manual": "manual_start",
+            "Paro manual": "manual_stop",
+            "Automático": "automatic",
+        }[mode]
+        self._attr_name = mode
         self._attr_unique_id = f"{coordinator.api.device_id}_sector_{sector_number}_{operation}"
-        self._attr_icon = "mdi:water" if start else "mdi:water-off"
+        self._attr_icon = {
+            "Marcha manual": "mdi:water",
+            "Paro manual": "mdi:water-off",
+            "Automático": "mdi:calendar-clock",
+        }[mode]
 
     async def async_press(self) -> None:
-        if self._start:
+        if self._mode == "Marcha manual":
             await self.coordinator.api.start_sector(self._number)
-        else:
+        elif self._mode == "Paro manual":
             await self.coordinator.api.stop_sector(self._number)
-        self.coordinator.record_command(f"{'Iniciar' if self._start else 'Parar'} sector {self._item_name}")
+        else:
+            await self.coordinator.api.automatic_sector(self._number)
+
+        self.coordinator.record_sector_mode(self._number, self._mode)
+        self.coordinator.record_command(
+            f"Sector {self._item_name}: {self._mode}"
+        )
         await self.coordinator.async_request_refresh()

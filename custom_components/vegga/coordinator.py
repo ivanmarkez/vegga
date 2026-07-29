@@ -39,6 +39,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         self.last_history_update: datetime | None = None
         self.last_command: str | None = None
         self.last_command_at: datetime | None = None
+        self.sector_modes: dict[int, str] = {}
         self._history: list[dict[str, Any]] = []
 
     @staticmethod
@@ -205,4 +206,19 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
     def record_command(self, command: str) -> None:
         self.last_command = command
         self.last_command_at = datetime.now(timezone.utc)
+        self.async_update_listeners()
+
+    def sector_mode(self, sector_number: int) -> str:
+        """Return the last known operating mode for a sector.
+
+        The VEGGA sector list does not consistently expose the manual override
+        field on every controller firmware. Automatic is therefore the safe
+        initial state, and commands sent by this integration are retained
+        immediately so the UI reflects the selected mode without waiting for
+        cloud propagation.
+        """
+        return self.sector_modes.get(sector_number, "Automático")
+
+    def record_sector_mode(self, sector_number: int, mode: str) -> None:
+        self.sector_modes[sector_number] = mode
         self.async_update_listeners()
