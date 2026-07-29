@@ -58,3 +58,34 @@ def test_a5500_irrigation_flag_marks_sector_active() -> None:
     ]
 
     assert active_sector_numbers(runtime, sectors) == {2}
+
+
+def test_a5500_xstatus_matches_official_frontend_rule() -> None:
+    sectors = [
+        {"_agronic_number": number, "pk": {"id": number}}
+        for number in range(1, 8)
+    ]
+    runtime = [
+        {"pk": {"id": 1}, "xStatus": 0},
+        {"pk": {"id": 2}, "xStatus": 1},
+        {"pk": {"id": 3}, "xStatus": 2},
+        {"pk": {"id": 4}, "xStatus": 3},
+        {"pk": {"id": 5}, "xStatus": 4},
+        {"pk": {"id": 6}, "xStatus": 5},
+        {"pk": {"id": 7}, "xStatus": 6},
+    ]
+
+    assert active_sector_numbers(runtime, sectors) == {2, 3, 5}
+
+
+def test_irrigation_true_response_is_not_treated_as_all_active() -> None:
+    sectors = [
+        {"_agronic_number": 1, "pk": {"id": 1}},
+        {"_agronic_number": 2, "pk": {"id": 2}},
+    ]
+    runtime = [
+        {"pk": {"id": 1}, "xStatus": 0},
+        {"pk": {"id": 2}, "xStatus": 3},
+    ]
+
+    assert active_sector_numbers(runtime, sectors) == set()

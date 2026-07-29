@@ -23,6 +23,14 @@ ACTIVE_TEXT = {
 
 def is_active(item: dict[str, Any]) -> bool:
     """Return whether a VEGGA runtime row explicitly reports irrigation."""
+    # Exact A-5500 rule used by VEGGA's official frontend. ``irrigation`` is a
+    # client-side derived property; the API supplies ``xStatus``.
+    if item.get("xStatus") is not None:
+        try:
+            return int(item["xStatus"]) not in {0, 3, 5, 6}
+        except (TypeError, ValueError):
+            pass
+
     for key in (
         "active",
         "isActive",
@@ -153,12 +161,6 @@ def active_sector_numbers(
         for row in dict_rows
         if is_active(row)
     ]
-    # VEGGA's irrigation=true endpoint is filtered on some firmware versions
-    # and omits an explicit state flag. In that format every returned row is
-    # active.
-    if dict_rows and not active_rows:
-        active_rows = dict_rows
-
     result: set[int] = set()
     same_shape = len(dict_rows) == sector_count
     for position, row in enumerate(dict_rows, start=1):

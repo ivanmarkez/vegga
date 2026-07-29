@@ -25,6 +25,11 @@ def _program_name(program: dict[str, Any], fallback: int) -> str:
 
 
 def _is_active(item: dict[str, Any]) -> bool:
+    if item.get("xStatus") is not None:
+        try:
+            return int(item["xStatus"]) not in {0, 3, 5, 6}
+        except (TypeError, ValueError):
+            pass
     for key in ("active", "isActive", "running", "isRunning", "executing", "inProgress", "irrigation", "irrigating"):
         value = item.get(key)
         if isinstance(value, bool):
