@@ -9,6 +9,7 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
@@ -475,12 +476,25 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
+
+    # Remove obsolete entities that were created by earlier releases but are
+    # no longer backed by a working data source. Merely ceasing to add them
+    # leaves grey "No disponible" entries in Home Assistant's registry.
+    registry = er.async_get(hass)
+    obsolete_unique_ids = (
+        f"{coordinator.api.device_id}_pressure",
+        f"{coordinator.api.device_id}_history_anomaly_count",
+    )
+    for unique_id in obsolete_unique_ids:
+        entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id is not None:
+            registry.async_remove(entity_id)
+
     entities: list[SensorEntity] = [
         VeggaProgramsSensor(coordinator),
         VeggaActiveProgramsSensor(coordinator),
         VeggaSectorsSensor(coordinator),
         VeggaActiveSectorsSensor(coordinator),
-        VeggaAnomalyCountSensor(coordinator),
         VeggaLastCommandSensor(coordinator),
         VeggaLastUpdateSensor(coordinator),
         VeggaLastHistoryUpdateSensor(coordinator),
