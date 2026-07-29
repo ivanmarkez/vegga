@@ -100,8 +100,33 @@ def _remaining_time(
     if direct[1] is not None:
         return direct
 
-    subprograms = program.get("subprograms")
+    subprograms = next(
+        (
+            program.get(key)
+            for key in ("programSector", "programSectors", "progSectors", "subprograms")
+            if isinstance(program.get(key), list) and program.get(key)
+        ),
+        None,
+    )
     if isinstance(subprograms, list) and subprograms:
+        # A-5500 detail uses programSector and marks the running row xState=1.
+        active_subprogram = next(
+            (
+                item
+                for item in subprograms
+                if isinstance(item, dict) and _integer(item.get("xState")) == 1
+            ),
+            None,
+        )
+        if isinstance(active_subprogram, dict):
+            active_unit = _program_unit(active_subprogram)
+            formatted = _format_remaining(
+                active_subprogram.get("xValue"),
+                active_unit if active_unit is not None else program_unit,
+            )
+            if formatted[1] is not None:
+                return formatted
+
         # A-5500 is one-based; A-4000 exposes zero-based xSubprogramCourse.
         current = _integer(program.get("xSubProgramInProgress"))
         index = current - 1 if current and current > 0 else None
@@ -262,6 +287,10 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
             "remaining_seconds": seconds,
             "remaining_time": display,
             "live_detail_loaded": isinstance(detail, dict),
+            "live_detail_has_program_sector": bool(
+                isinstance(detail, dict)
+                and isinstance(detail.get("programSector"), list)
+            ),
         }
 
     async def async_press(self) -> None:

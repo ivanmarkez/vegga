@@ -17,7 +17,7 @@ from .coordinator import VeggaCoordinator
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SELECT]
 
 FRONTEND_PATH = "/vegga_static/vegga-sector-card.js"
-FRONTEND_URL = f"{FRONTEND_PATH}?v=0.4.48"
+FRONTEND_URL = f"{FRONTEND_PATH}?v=0.4.49"
 LEGACY_FRONTEND_PATH = "/vegga_static/vegga-sector-card-0.4.44.js"
 
 
