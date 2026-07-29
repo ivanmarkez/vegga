@@ -156,13 +156,26 @@ def active_sector_numbers(
             name_to_number[name] = controller_number
 
     dict_rows = [row for row in runtime_rows if isinstance(row, dict)]
+    # On the A-5500 the normal /sectors response itself contains the live
+    # xStatus used by VEGGA. Some accounts return an empty or non-runtime
+    # payload for ?irrigation=true, so include configured rows as a live
+    # fallback (duplicate matches collapse in the result set).
+    dict_rows.extend(
+        row
+        for row in configured_sectors
+        if isinstance(row, dict) and (
+            row.get("xStatus") is not None
+            or row.get("irrigation") is not None
+            or row.get("xProgramN") is not None
+        )
+    )
     active_rows = [
         row
         for row in dict_rows
         if is_active(row)
     ]
     result: set[int] = set()
-    same_shape = len(dict_rows) == sector_count
+    same_shape = len(runtime_rows) == sector_count
     for position, row in enumerate(dict_rows, start=1):
         if row not in active_rows:
             continue

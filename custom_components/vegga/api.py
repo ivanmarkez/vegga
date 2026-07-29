@@ -367,6 +367,16 @@ class VeggaApi:
             data, ("content", "meters", "data", "items", "results")
         )
 
+    async def get_fertilizer_config(self) -> Any:
+        """Return A-5500 fertilization sensor assignments."""
+        if not self.device_id:
+            raise VeggaApiError("No se ha seleccionado ningún controlador")
+        return await self._request_url(
+            "GET",
+            f"{API_BASE_URL}/units/{self.device_id}/config",
+            params=[("add", "fertilizer"), ("add", "agitators")],
+        )
+
     async def get_programs(self) -> list[dict[str, Any]]:
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")

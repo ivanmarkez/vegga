@@ -89,3 +89,13 @@ def test_irrigation_true_response_is_not_treated_as_all_active() -> None:
     ]
 
     assert active_sector_numbers(runtime, sectors) == set()
+
+
+def test_a5500_configured_sector_xstatus_is_live_fallback() -> None:
+    sectors = [
+        {"_agronic_number": 1, "pk": {"id": 30}, "xStatus": 1},
+        {"_agronic_number": 2, "pk": {"id": 81}, "xStatus": 2},
+        {"_agronic_number": 3, "pk": {"id": 82}, "xStatus": 0},
+    ]
+
+    assert active_sector_numbers([], sectors) == {1, 2}

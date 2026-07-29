@@ -158,7 +158,50 @@ def _analog_unit(fmt: dict[str, Any]) -> str | None:
     return None
 
 
+def _find_nested_value(value: Any, wanted_key: str) -> Any:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key).casefold() == wanted_key.casefold():
+                return child
+        for child in value.values():
+            found = _find_nested_value(child, wanted_key)
+            if found not in (None, "", 0, "0"):
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_nested_value(child, wanted_key)
+            if found not in (None, "", 0, "0"):
+                return found
+    return None
+
+
 def _analog_row(data: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    # This is the selection rule used by VEGGA for A-5500: checkCE/checkPH
+    # contain the one-based analogue input assigned to fertilization control.
+    config_key = "checkPH" if kind == "ph" else "checkCE"
+    configured_input = _find_nested_value(data.get("fertilizer_config"), config_key)
+    try:
+        configured_input = int(configured_input)
+    except (TypeError, ValueError):
+        configured_input = 0
+
+    analogs = [row for row in data.get("analogs", []) if isinstance(row, dict)]
+    if configured_input > 0:
+        for position, row in enumerate(analogs, start=1):
+            pk = row.get("pk")
+            candidates = (
+                position,
+                row.get("input"),
+                row.get("id"),
+                pk.get("id") if isinstance(pk, dict) else None,
+            )
+            for candidate in candidates:
+                try:
+                    if int(candidate) == configured_input:
+                        return row, _analog_format(data, row)
+                except (TypeError, ValueError):
+                    continue
+
     for row in data.get("analogs", []):
         if not isinstance(row, dict) or row.get("input") == 0:
             continue
@@ -392,6 +435,12 @@ class VeggaActiveProgramsSensor(VeggaEntity, SensorEntity):
                     numbers.append(int(item.get("reference")))
                 except (TypeError, ValueError):
                     pass
+        if not any(numbers):
+            numbers = [
+                index
+                for index, program in enumerate(data.get("programs", []), start=1)
+                if isinstance(program, dict) and _is_active(program)
+            ]
         names: list[str] = []
         programs = data.get("programs", [])
         for number in numbers:
@@ -498,6 +547,7 @@ class VeggaLiveStatusDiagnosticSensor(VeggaEntity, SensorEntity):
             "analog_sensor_count": len((self.coordinator.data or {}).get("analogs", [])),
             "analog_sensor_sample": _sample_payload((self.coordinator.data or {}).get("analogs", [])),
             "analog_format_sample": _sample_payload((self.coordinator.data or {}).get("analog_formats", [])),
+            "fertilizer_config_sample": _sample_payload((self.coordinator.data or {}).get("fertilizer_config")),
             "meter_count": len((self.coordinator.data or {}).get("meters", [])),
             "meter_sample": _sample_payload((self.coordinator.data or {}).get("meters", [])),
             "response_sample": _sample_payload(payload),
