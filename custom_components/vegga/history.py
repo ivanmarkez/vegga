@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from statistics import median
 from typing import Any
 
@@ -172,6 +172,32 @@ def flow_values(record: dict[str, Any]) -> tuple[float | None, float | None, flo
         return None, None, None
     return _number(flow.get("expected")), _number(flow.get("actual")), _number(flow.get("deviation"))
 
+
+
+def sector_volume_for_date(
+    records: list[dict[str, Any]],
+    number: int,
+    target_date: date,
+    tzinfo,
+) -> tuple[float | None, int]:
+    """Return total irrigation volume and record count for one local calendar day."""
+    total = 0.0
+    count = 0
+    for record in records:
+        if sector_number(record) != number:
+            continue
+        stamp = start_time(record) or end_time(record)
+        volume = volume_m3(record)
+        if stamp is None or volume is None or volume <= 0:
+            continue
+        try:
+            local_date = stamp.astimezone(tzinfo).date()
+        except (ValueError, OSError):
+            local_date = stamp.date()
+        if local_date == target_date:
+            total += volume
+            count += 1
+    return (round(total, 3), count) if count else (None, 0)
 
 def analyse_sector(
     records: list[dict[str, Any]],

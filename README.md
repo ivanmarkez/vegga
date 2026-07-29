@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.23
+# VEGGA Agrónic para Home Assistant — v0.4.24
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -18,7 +18,7 @@ Tras instalar o actualizar la integración y reiniciar Home Assistant:
 
 1. Abre **Ajustes → Paneles → Recursos**.
 2. Añade el recurso:
-   - URL: `/vegga_static/vegga-sector-card.js?v=0.4.23`
+   - URL: `/vegga_static/vegga-sector-card.js?v=0.4.24`
    - Tipo: `Módulo JavaScript`
 3. Recarga completamente el navegador o la aplicación.
 4. Añade una tarjeta y busca **VEGGA - Control seguro de sector**.
@@ -36,3 +36,7 @@ entity: select.sector_1_modo_de_funcionamiento
 ## Seguridad en dos capas
 
 El frontend muestra el popup y, además, la integración conserva la protección de la versión 0.4.21: primero deja el cambio pendiente y después ejecuta el confirmación emergente de la tarjeta. Así, la tarjeta no llama directamente a una orden peligrosa.
+
+
+## 0.4.24
+- Añade al sensor de consumo de cada sector los atributos `yesterday_volume_m3`, `yesterday_irrigation_count` y `yesterday_date` para comparar visualmente con el riego del día anterior.

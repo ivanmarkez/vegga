@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -8,10 +8,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .entity import VeggaEntity, VeggaSectorEntity
-from .history import analyse_sector
+from .history import analyse_sector, sector_volume_for_date
 
 
 def _program_name(program: dict[str, Any], fallback: int) -> str:
@@ -357,6 +358,11 @@ class VeggaSectorConsumptionSensor(VeggaSectorEntity, SensorEntity):
         direction = None
         if analysis.deviation_percent is not None:
             direction = "alto" if analysis.deviation_percent > 0 else "bajo"
+        records = (self.coordinator.data or {}).get("history", [])
+        yesterday = dt_util.now().date() - timedelta(days=1)
+        yesterday_volume, yesterday_count = sector_volume_for_date(
+            records, self._number, yesterday, dt_util.DEFAULT_TIME_ZONE
+        )
         return {
             "sector_number": analysis.sector_number,
             "sector_name": analysis.sector_name,
@@ -372,6 +378,9 @@ class VeggaSectorConsumptionSensor(VeggaSectorEntity, SensorEntity):
             "vegga_flow_deviation_percent": analysis.vegga_flow_deviation_percent,
             "last_started_at": analysis.last_started_at,
             "last_ended_at": analysis.last_ended_at,
+            "yesterday_volume_m3": yesterday_volume,
+            "yesterday_irrigation_count": yesterday_count,
+            "yesterday_date": yesterday.isoformat(),
         }
 
 
