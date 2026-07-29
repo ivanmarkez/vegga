@@ -54,42 +54,87 @@ def _program_runtime(
     return None
 
 
-def _remaining_time(program: dict[str, Any]) -> tuple[int | None, str | None]:
-    """Read the A-5500 current subprogram xValue using VEGGA's time formats."""
-    subprograms = program.get("subprograms")
-    if not isinstance(subprograms, list) or not subprograms:
-        return None, None
-
-    # A-5500 is one-based; A-4000 exposes the zero-based xSubprogramCourse.
-    current = _integer(program.get("xSubProgramInProgress"))
-    index = current - 1 if current and current > 0 else None
-    if index is None:
-        course = _integer(program.get("xSubprogramCourse"))
-        index = course if course is not None and course >= 0 else None
-    if index is None or index >= len(subprograms):
-        return None, None
-
-    subprogram = subprograms[index]
-    if not isinstance(subprogram, dict):
-        return None, None
-    seconds = _integer(subprogram.get("xValue"))
+def _format_remaining(value: Any, unit: Any) -> tuple[int | None, str | None]:
+    """Format an A-5500 pending xValue using VEGGA's irrigation units."""
+    seconds = _integer(value)
+    unit_number = _integer(unit)
     if seconds is None or seconds < 0:
         return None, None
 
-    unit = _integer(subprogram.get("irrigUnits"))
-    if unit is None:
-        unit = _integer(subprogram.get("unit"))
-    if unit is None:
-        unit = _integer(program.get("irrigUnits"))
-
     # VEGGA A-5500: 0 = hours/minutes; 3 = minutes/seconds.
-    if unit == 0:
+    if unit_number == 0:
         rounded_minutes = (seconds + 59) // 60
         hours, minutes = divmod(rounded_minutes, 60)
         return seconds, f"{hours:02d}:{minutes:02d}"
-    if unit == 3:
+    if unit_number == 3:
         minutes, remaining_seconds = divmod(seconds, 60)
         return seconds, f"{minutes:02d}:{remaining_seconds:02d}"
+    return None, None
+
+
+def _program_unit(program: dict[str, Any]) -> int | None:
+    for key in (
+        "irrigUnits",
+        "irrigUnitsSubp",
+        "irrigationUnits",
+        "unit",
+        "units",
+    ):
+        unit = _integer(program.get(key))
+        if unit is not None:
+            return unit
+    return None
+
+
+def _remaining_time(
+    program: dict[str, Any],
+    program_number: int,
+    irrigating_sectors: list[dict[str, Any]],
+) -> tuple[int | None, str | None]:
+    """Read pending time from the live A-5500 program or associated sector."""
+    program_unit = _program_unit(program)
+
+    # A-5500 program rows expose the current pending value directly. This is
+    # the normal fallback when the list response contains ``subprograms: null``.
+    direct = _format_remaining(program.get("xValue"), program_unit)
+    if direct[1] is not None:
+        return direct
+
+    subprograms = program.get("subprograms")
+    if isinstance(subprograms, list) and subprograms:
+        # A-5500 is one-based; A-4000 exposes zero-based xSubprogramCourse.
+        current = _integer(program.get("xSubProgramInProgress"))
+        index = current - 1 if current and current > 0 else None
+        if index is None:
+            course = _integer(program.get("xSubprogramCourse"))
+            index = course if course is not None and course >= 0 else None
+        if index is not None and index < len(subprograms):
+            subprogram = subprograms[index]
+            if isinstance(subprogram, dict):
+                subprogram_unit = _program_unit(subprogram)
+                formatted = _format_remaining(
+                    subprogram.get("xValue"),
+                    subprogram_unit if subprogram_unit is not None else program_unit,
+                )
+                if formatted[1] is not None:
+                    return formatted
+
+    # The official A-5500 sector detail uses sector.xValue as the program's
+    # pending value. Match it through xProgramN, using the program unit when
+    # the sector row does not repeat the format.
+    for sector in irrigating_sectors:
+        if not isinstance(sector, dict) or not is_active(sector):
+            continue
+        referenced = _integer(sector.get("xProgramN"))
+        if referenced != program_number:
+            continue
+        sector_unit = _program_unit(sector)
+        formatted = _format_remaining(
+            sector.get("xValue"),
+            sector_unit if sector_unit is not None else program_unit,
+        )
+        if formatted[1] is not None:
+            return formatted
     return None, None
 
 
@@ -199,7 +244,15 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
             self._number,
             data.get("irrigating_sectors", []),
         )
-        seconds, display = _remaining_time(program) if active and program else (None, None)
+        seconds, display = (
+            _remaining_time(
+                program,
+                self._number,
+                data.get("irrigating_sectors", []),
+            )
+            if active and program
+            else (None, None)
+        )
         return {
             "program_number": self._number,
             "program_name": self._item_name,
