@@ -375,6 +375,20 @@ class VeggaAnalogSensor(VeggaEntity, SensorEntity):
         }
 
 
+class VeggaPressureSensor(VeggaAnalogSensor):
+    """Pressure from the third analogue input of Agrónic 17669."""
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "pressure")
+        # Use a fresh, explicit registry id so Home Assistant cannot retain a
+        # failed generic pressure entity from a previous platform load.
+        self._attr_unique_id = f"{coordinator.api.device_id}_analog_pressure"
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return "bar"
+
+
 class VeggaFlowMeterSensor(VeggaEntity, SensorEntity):
     _attr_name = "Caudalímetro"
     _attr_icon = "mdi:water-pump"
@@ -474,7 +488,7 @@ async def async_setup_entry(
         VeggaLiveStatusDiagnosticSensor(coordinator),
         VeggaAnalogSensor(coordinator, "ph"),
         VeggaAnalogSensor(coordinator, "ec"),
-        VeggaAnalogSensor(coordinator, "pressure"),
+        VeggaPressureSensor(coordinator),
         VeggaFlowMeterSensor(coordinator),
     ]
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
