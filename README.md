@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.30
+# VEGGA Agrónic para Home Assistant — v0.5.2
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 

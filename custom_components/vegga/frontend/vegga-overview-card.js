@@ -1,4 +1,4 @@
-const VEGGA_OVERVIEW_VERSION = "0.5.1";
+const VEGGA_OVERVIEW_VERSION = "0.5.2";
 
 class VeggaOverviewCard extends HTMLElement {
   constructor() {
