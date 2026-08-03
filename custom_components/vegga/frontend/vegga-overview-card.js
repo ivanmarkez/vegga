@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.13";
+const VEGGA_UI_VERSION = "0.5.14";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -512,10 +512,10 @@ class VeggaOverviewCard extends HTMLElement {
         <div class="metric"><span>Fin</span><strong class="${item.actual.active ? "running" : ""}">${item.actual.active ? "En curso" : this._escape(this._actualMoment(item.actual.ended))}</strong></div>
         <div class="metric"><span>Dur.</span><strong>${this._escape(item.duration)}</strong></div>
         <div class="metric"><span>Hoy</span><strong>${this._format(item.today)} m³</strong></div>
-        <div class="metric"><span>Ayer</span><strong>${this._format(item.yesterday)} m³</strong></div>
-        <div class="metric"><span>Δ</span><strong><span class="delta ${item.delta.cls}">${item.delta.text}</span></strong></div>
         <div class="metric"><span>Orden</span><strong>${item.order ? `${item.order}.º` : "—"}</strong></div>
         <div class="metric"><span>Estado</span><strong class="compact-state ${item.actual.active ? "active" : ""}">${item.actual.active ? "Regando" : "Parado"}</strong></div>
+        <div class="metric"><span>Δ</span><strong><span class="delta ${item.delta.cls}">${item.delta.text}</span></strong></div>
+        <div class="metric"><span>Ayer</span><strong>${this._format(item.yesterday)} m³</strong></div>
       </div>
     </article>`).join("");
 
