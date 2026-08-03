@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.10";
+const VEGGA_UI_VERSION = "0.5.11";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -260,49 +260,80 @@ class VeggaOverviewCard extends HTMLElement {
       .filter((item) => item.at)
       .sort((a, b) => a.at - b.at);
 
+    // A sector can switch on more than once during the same day.  The old
+    // implementation mixed the first start with the last finish, which made
+    // a short early activation place the sector at the beginning of the
+    // table even when its real irrigation cycle happened much later.
+    // Build complete on/off sessions and display the latest real session.
+    const sessions = [];
     let previousOn = false;
     let activeSince = null;
-    let firstStart = null;
-    let lastEnd = null;
-    let totalMs = 0;
-    let sawActivity = false;
 
     for (const { row, at } of sorted) {
-      const isOn = this._historyRowState(row) === "on";
+      const state = this._historyRowState(row);
+      if (state !== "on" && state !== "off") continue;
+      const isOn = state === "on";
       const time = new Date(Math.max(dayStart.getTime(), at.getTime()));
+
       if (isOn && !previousOn) {
         activeSince = time;
-        if (!firstStart) firstStart = time;
-        sawActivity = true;
       } else if (!isOn && previousOn) {
-        if (activeSince) totalMs += Math.max(0, time.getTime() - activeSince.getTime());
-        lastEnd = time;
+        if (activeSince && time >= activeSince) {
+          sessions.push({
+            started: activeSince,
+            ended: time,
+            durationMs: Math.max(0, time.getTime() - activeSince.getTime()),
+            active: false,
+          });
+        }
         activeSince = null;
       }
       previousOn = isOn;
     }
 
     const currentlyOn = String(currentState?.state || "").toLowerCase() === "on";
-    if (currentlyOn && !activeSince) {
+    if (currentlyOn) {
+      if (!activeSince) {
+        const changed = this._date(currentState?.last_changed);
+        activeSince = changed && changed >= dayStart ? changed : dayStart;
+      }
+      sessions.push({
+        started: activeSince,
+        ended: null,
+        durationMs: Math.max(0, now.getTime() - activeSince.getTime()),
+        active: true,
+      });
+    } else if (previousOn && activeSince) {
+      // The history endpoint can occasionally omit the final off row while
+      // the current entity state is already off.  Close that session at the
+      // current state's last change when possible, otherwise at now.
       const changed = this._date(currentState?.last_changed);
-      activeSince = changed && changed >= dayStart ? changed : dayStart;
-      if (!firstStart) firstStart = activeSince;
-      sawActivity = true;
-    }
-    if (currentlyOn && activeSince) {
-      totalMs += Math.max(0, now.getTime() - activeSince.getTime());
-    } else if (!currentlyOn && previousOn && activeSince) {
-      totalMs += Math.max(0, now.getTime() - activeSince.getTime());
-      lastEnd = now;
-      activeSince = null;
+      const ended = changed && changed >= activeSince && changed <= now ? changed : now;
+      sessions.push({
+        started: activeSince,
+        ended,
+        durationMs: Math.max(0, ended.getTime() - activeSince.getTime()),
+        active: false,
+      });
     }
 
+    if (!sessions.length) {
+      return {
+        hasActivity: false,
+        started: null,
+        ended: null,
+        active: currentlyOn,
+        durationMinutes: null,
+      };
+    }
+
+    const selected = sessions[sessions.length - 1];
     return {
-      hasActivity: sawActivity,
-      started: firstStart,
-      ended: lastEnd,
-      active: currentlyOn,
-      durationMinutes: sawActivity ? Math.max(0, Math.round(totalMs / 60000)) : null,
+      hasActivity: true,
+      started: selected.started,
+      ended: selected.ended,
+      active: selected.active,
+      durationMinutes: Math.max(0, Math.round(selected.durationMs / 60000)),
     };
   }
 
