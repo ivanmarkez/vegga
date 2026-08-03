@@ -96,6 +96,17 @@ class VeggaProgramButton(VeggaEntity, ButtonEntity):
         self._attr_unique_id = f"{coordinator.api.device_id}_program_{program_number}_{operation}"
         self._attr_icon = "mdi:play" if start else "mdi:stop"
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose stable metadata for the aggregate Lovelace controls card."""
+        return {
+            "vegga_entity_type": "program_control",
+            "vegga_device_id": str(self.coordinator.api.device_id),
+            "program_number": self._number,
+            "program_name": self._item_name,
+            "vegga_action": "start" if self._start else "stop",
+        }
+
     async def async_press(self) -> None:
         if self._start:
             await self.coordinator.api.start_program(self._number)

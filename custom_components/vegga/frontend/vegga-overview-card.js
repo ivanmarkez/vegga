@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.4";
+const VEGGA_UI_VERSION = "0.5.5";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -14,7 +14,26 @@ const VeggaUi = {
   prefix(config) {
     return String(config?.controller || "").toLowerCase();
   },
-  belongs(state, config) {
+  controllerDeviceId(hass, config) {
+    const prefix = this.prefix(config);
+    const controllerState = hass?.states?.[`sensor.${prefix}_sectores`]
+      || hass?.states?.[`sensor.${prefix}_programas`]
+      || hass?.states?.[`binary_sensor.${prefix}_conexion_vegga`];
+    const explicit = controllerState?.attributes?.device_id
+      ?? controllerState?.attributes?.vegga_device_id;
+    if (explicit !== undefined && explicit !== null && String(explicit).trim()) {
+      return String(explicit).trim();
+    }
+    const trailingNumber = prefix.match(/(?:^|_)(\d+)$/);
+    return trailingNumber ? trailingNumber[1] : "";
+  },
+  belongs(state, config, hass) {
+    const configuredDevice = this.controllerDeviceId(hass, config);
+    const stateDevice = state?.attributes?.vegga_device_id
+      ?? state?.attributes?.device_id;
+    if (configuredDevice && stateDevice !== undefined && stateDevice !== null) {
+      return String(stateDevice) === configuredDevice;
+    }
     const stem = String(state?.entity_id || "").split(".")[1] || "";
     return stem.startsWith(`${this.prefix(config)}_`);
   },
@@ -90,7 +109,7 @@ class VeggaOverviewCard extends HTMLElement {
       .replace(/\s+(Consumo último riego|Consumo|Último riego|Duración último riego|Programas relacionados)$/i, "")
       .trim();
   }
-  _belongsToController(state) { return VeggaUi.belongs(state, this._config); }
+  _belongsToController(state) { return VeggaUi.belongs(state, this._config, this._hass); }
   _sectorNumber(state) {
     const n = Number(state?.attributes?.sector_number);
     return Number.isFinite(n) ? n : null;
@@ -333,6 +352,10 @@ class VeggaSectorControlsCard extends HTMLElement {
   getGridOptions() { return { rows: 12, columns: 12, min_rows: 5, min_columns: 6 }; }
 
   _sectorName(state) {
+    const explicit = state?.attributes?.sector_name;
+    if (explicit !== undefined && explicit !== null && String(explicit).trim()) {
+      return String(explicit).trim();
+    }
     return String(state?.attributes?.friendly_name || state?.entity_id || "Sector")
       .replace(/^Sector\s+/i, "")
       .replace(/\s+Modo de funcionamiento$/i, "")
@@ -342,9 +365,17 @@ class VeggaSectorControlsCard extends HTMLElement {
   _selects() {
     return Object.values(this._hass?.states || {})
       .filter((state) => {
-        if (!state.entity_id.startsWith("select.") || !VeggaUi.belongs(state, this._config)) return false;
+        if (!state.entity_id.startsWith("select.")) return false;
         const options = Array.isArray(state.attributes?.options) ? state.attributes.options : [];
-        return VEGGA_SECTOR_MODES.every((mode) => options.includes(mode.value)) || /Modo de funcionamiento$/i.test(state.attributes?.friendly_name || "");
+        const isSectorMode = state.attributes?.vegga_entity_type === "sector_mode"
+          || VEGGA_SECTOR_MODES.every((mode) => options.includes(mode.value));
+        if (!isSectorMode) return false;
+        if (state.attributes?.vegga_device_id !== undefined) {
+          return VeggaUi.belongs(state, this._config, this._hass);
+        }
+        // Compatibility with entities created by older VEGGA versions.  Their
+        // entity_id is based on the sector device name, not the controller.
+        return true;
       })
       .map((state) => ({ state, name: this._sectorName(state) }))
       .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base", numeric: true }));
@@ -472,6 +503,15 @@ class VeggaProgramControlsCard extends HTMLElement {
   getGridOptions() { return { rows: 8, columns: 12, min_rows: 4, min_columns: 6 }; }
 
   _extractProgram(state) {
+    const explicitName = state?.attributes?.program_name;
+    const explicitAction = state?.attributes?.vegga_action;
+    if (explicitName && (explicitAction === "start" || explicitAction === "stop")) {
+      return {
+        action: explicitAction,
+        name: String(explicitName),
+        number: Number(state?.attributes?.program_number) || null,
+      };
+    }
     const friendly = String(state?.attributes?.friendly_name || "");
     const lower = friendly.toLocaleLowerCase("es-ES");
     const starts = ["iniciar programa ", "arrancar programa "];
@@ -496,9 +536,12 @@ class VeggaProgramControlsCard extends HTMLElement {
   _programs() {
     const grouped = new Map();
     Object.values(this._hass?.states || {}).forEach((state) => {
-      if (!state.entity_id.startsWith("button.") || !VeggaUi.belongs(state, this._config)) return;
+      if (!state.entity_id.startsWith("button.")) return;
       const parsed = this._extractProgram(state);
-      if (!parsed?.name) return;
+      if (!parsed) return;
+      if (state.attributes?.vegga_device_id !== undefined
+          && !VeggaUi.belongs(state, this._config, this._hass)) return;
+      if (!parsed.name) return;
       const key = parsed.name.toLocaleLowerCase("es-ES").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       const current = grouped.get(key) || { name: parsed.name, start: null, stop: null };
       current[parsed.action] = state;

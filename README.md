@@ -1,3 +1,10 @@
+
+## 0.5.5
+
+- Corrige la detección de los selectores de sector y los botones de programa en las tarjetas agregadas.
+- Los controles se identifican mediante metadatos estables de VEGGA, no por el nombre automático de la entidad.
+- Mantiene compatibilidad con entidades creadas por versiones anteriores.
+
 # VEGGA Agrónic para Home Assistant — v0.5.4
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.

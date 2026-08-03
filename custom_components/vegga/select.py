@@ -49,6 +49,16 @@ class VeggaSectorModeSelect(VeggaSectorEntity, SelectEntity):
     def current_option(self) -> str:
         return self.coordinator.sector_mode(self._sector_number)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose stable metadata for the aggregate Lovelace controls card."""
+        return {
+            "vegga_entity_type": "sector_mode",
+            "vegga_device_id": str(self.coordinator.api.device_id),
+            "sector_number": self._sector_number,
+            "sector_name": self._sector_device_name,
+        }
+
     async def async_select_option(self, option: str) -> None:
         """Apply the selected sector mode to the Agrónic controller."""
         if option not in OPTIONS:
