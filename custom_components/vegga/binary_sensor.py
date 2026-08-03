@@ -10,8 +10,6 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import DOMAIN
 from .entity import VeggaEntity, VeggaSectorEntity
 from .history import analyse_sector
-from .runtime import is_active as _is_active
-from .runtime import sector_is_irrigating
 
 
 def _sector_number(item: dict[str, Any], fallback: int) -> int:
@@ -28,20 +26,20 @@ def _sector_name(item: dict[str, Any], fallback: int) -> str:
             return str(value)
     return f"Sector {fallback}"
 
-def _conditioner_number(item: dict[str, Any], fallback: int) -> int:
-    pk = item.get("pk")
-    for value in (
-        pk.get("id") if isinstance(pk, dict) else None,
-        item.get("id"),
-        item.get("number"),
-    ):
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            continue
-        if number > 0:
-            return number
-    return fallback
+
+def _is_active(item: dict[str, Any]) -> bool:
+    for key in ("active", "isActive", "running", "isRunning", "enabled", "irrigating"):
+        value = item.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "on", "active", "running", "irrigating"}
+    status = item.get("status") or item.get("state")
+    return isinstance(status, str) and status.strip().lower() in {"active", "running", "on", "irrigating"}
+
+
 
 
 def _live_sector_numbers(payload: Any) -> set[int]:
@@ -75,20 +73,6 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[BinarySensorEntity] = [VeggaCloudConnectionBinarySensor(coordinator)]
 
-    conditioners = (coordinator.data or {}).get("conditioners", [])
-    for fallback, conditioner in enumerate(conditioners, start=1):
-        if not isinstance(conditioner, dict):
-            continue
-        number = _conditioner_number(conditioner, fallback)
-        # Only configured conditioners are shown by VEGGA. Keep the two
-        # pressure protections as separate problem entities.
-        if number in (1, 2):
-            entities.append(VeggaPressureConditionerBinarySensor(coordinator, number))
-
-    # Aggregate alarm requested by the user: it is ON specifically when a
-    # definitive-stop conditioner is acting.
-    entities.append(VeggaDefinitiveStopConditionerBinarySensor(coordinator))
-
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
         number = _sector_number(sector, fallback)
         name = _sector_name(sector, fallback)
@@ -113,117 +97,6 @@ class VeggaCloudConnectionBinarySensor(VeggaEntity, BinarySensorEntity):
         return self.coordinator.last_update_success
 
 
-class VeggaPressureConditionerBinarySensor(VeggaEntity, BinarySensorEntity):
-    """Low/high pressure conditioner state from the A-5500."""
-
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
-
-    def __init__(self, coordinator, number: int) -> None:
-        super().__init__(coordinator)
-        self._number = number
-        self._attr_name = (
-            "Condicionante baja presión"
-            if number == 1
-            else "Condicionante alta presión"
-        )
-        self._attr_unique_id = (
-            f"{coordinator.api.device_id}_pressure_conditioner_{number}"
-        )
-        self._attr_icon = "mdi:gauge-low" if number == 1 else "mdi:gauge-full"
-
-    def _row(self) -> dict[str, Any]:
-        for fallback, row in enumerate(
-            (self.coordinator.data or {}).get("conditioners", []), start=1
-        ):
-            if isinstance(row, dict) and _conditioner_number(row, fallback) == self._number:
-                return row
-        return {}
-
-    @property
-    def is_on(self) -> bool:
-        try:
-            return int(self._row().get("xStatus", 0)) == 1
-        except (TypeError, ValueError):
-            return False
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        row = self._row()
-        try:
-            status_number = int(row.get("xStatus", 0))
-        except (TypeError, ValueError):
-            status_number = 0
-        try:
-            function = int(row.get("function", self._number))
-        except (TypeError, ValueError):
-            function = self._number
-        return {
-            "conditioner": f"C{self._number}",
-            "name": row.get("name") or (
-                "Pre. baja" if self._number == 1 else "Pre. alta"
-            ),
-            "status": {
-                0: "Parado",
-                1: "Activo",
-                2: "Fuera de servicio",
-                3: "Error",
-            }.get(status_number, f"Desconocido ({status_number})"),
-            "action": {
-                1: "Paro definitivo",
-                2: "Paro temporal",
-                3: "Paro condicional",
-            }.get(function, f"Función {function}"),
-            "sensor": row.get("sensor"),
-            "current_value_raw": row.get("xValue"),
-            "reference_raw": row.get("valueA", row.get("reference1")),
-            "out_of_service": status_number == 2,
-            "vegga_data": row,
-        }
-
-
-class VeggaDefinitiveStopConditionerBinarySensor(VeggaEntity, BinarySensorEntity):
-    """Reports whether any definitive-stop conditioner is currently acting."""
-
-    _attr_name = "Paro definitivo por condicionante"
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_icon = "mdi:alert-octagon"
-
-    def __init__(self, coordinator) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = (
-            f"{coordinator.api.device_id}_definitive_stop_conditioner"
-        )
-
-    def _active_rows(self) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for row in (self.coordinator.data or {}).get("conditioners", []):
-            if not isinstance(row, dict):
-                continue
-            try:
-                is_definitive = int(row.get("function", -1)) == 1
-                is_active = int(row.get("xStatus", 0)) == 1
-            except (TypeError, ValueError):
-                continue
-            if is_definitive and is_active:
-                rows.append(row)
-        return rows
-
-    @property
-    def is_on(self) -> bool:
-        return bool(self._active_rows())
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        rows = self._active_rows()
-        return {
-            "active_conditioners": [
-                row.get("name") or f"C{_conditioner_number(row, index)}"
-                for index, row in enumerate(rows, start=1)
-            ],
-            "active_count": len(rows),
-        }
-
-
 class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:sprinkler-variant"
@@ -244,10 +117,30 @@ class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
         runtime = data.get("irrigating_sectors", [])
-        if sector_is_irrigating(runtime, data.get("sectors", []), self._number):
-            return True
+        for fallback, item in enumerate(runtime, start=1):
+            if not isinstance(item, dict):
+                continue
+            pk = item.get("pk")
+            values = (
+                item.get("_agronic_number"), item.get("sector"),
+                item.get("sectorNumber"), item.get("number"), item.get("id"),
+                pk.get("id") if isinstance(pk, dict) else None,
+            )
+            numbers = set()
+            for value in values:
+                try:
+                    numbers.add(int(value))
+                except (TypeError, ValueError):
+                    pass
+            program = item.get("xProgramN")
+            try:
+                program_active = int(program) > 0
+            except (TypeError, ValueError):
+                program_active = False
+            if (self._number in numbers or (not numbers and fallback == self._number)) and (program_active or _is_active(item) or bool(runtime)):
+                return True
         live_numbers = _live_sector_numbers(data.get("unit_status"))
-        if self._number in live_numbers:
+        if self._number in live_numbers or (self._number - 1) in live_numbers:
             return True
         sector = self._sector()
         return _is_active(sector) if sector else False

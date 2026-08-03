@@ -330,62 +330,6 @@ class VeggaApi:
             f"{HISTORY_BASE_URL}/devices/A5500/{self.device_id}/io/outputs/DIGITAL",
         )
 
-    async def get_analog_sensors(self) -> list[dict[str, Any]]:
-        """Return configured analogue sensors, including their live value."""
-        if not self.device_id:
-            raise VeggaApiError("No se ha seleccionado ningún controlador")
-        data = await self._request_url(
-            "GET",
-            f"{API_BASE_URL}/units/{self.device_id}/analogs",
-            params={"page": 1, "limit": 120},
-        )
-        return self._extract_nested_list(
-            data, ("content", "analogs", "data", "items", "results")
-        )
-
-    async def get_analog_formats(self) -> list[dict[str, Any]]:
-        """Return the decimal and unit definitions used by analogue sensors."""
-        if not self.device_id:
-            raise VeggaApiError("No se ha seleccionado ningún controlador")
-        data = await self._request(
-            "GET", f"/units/{self.device_id}/analogs/formatsview"
-        )
-        return self._extract_nested_list(
-            data, ("content", "formats", "data", "items", "results")
-        )
-
-    async def get_meters(self) -> list[dict[str, Any]]:
-        """Return controller flow meters and their live readings."""
-        if not self.device_id:
-            raise VeggaApiError("No se ha seleccionado ningún controlador")
-        data = await self._request_url(
-            "GET",
-            f"{API_BASE_URL}/units/{self.device_id}/meters",
-            params={"operative": "false"},
-        )
-        return self._extract_nested_list(
-            data, ("content", "meters", "data", "items", "results")
-        )
-
-    async def get_conditioners(self) -> list[dict[str, Any]]:
-        """Return configured conditioners with their live A-5500 state."""
-        if not self.device_id:
-            raise VeggaApiError("No se ha seleccionado ningún controlador")
-        data = await self._request("GET", f"/units/{self.device_id}/conditioners")
-        return self._extract_nested_list(
-            data, ("content", "conditioners", "data", "items", "results")
-        )
-
-    async def get_fertilizer_config(self) -> Any:
-        """Return A-5500 fertilization sensor assignments."""
-        if not self.device_id:
-            raise VeggaApiError("No se ha seleccionado ningún controlador")
-        return await self._request_url(
-            "GET",
-            f"{API_BASE_URL}/units/{self.device_id}/config",
-            params=[("add", "fertilizer"), ("add", "agitators")],
-        )
-
     async def get_programs(self) -> list[dict[str, Any]]:
         if not self.device_id:
             raise VeggaApiError("No se ha seleccionado ningún controlador")
@@ -394,23 +338,6 @@ class VeggaApi:
         if programs or isinstance(data, list):
             return programs
         raise VeggaApiError("Formato de programas no reconocido")
-
-    async def get_program_detail(self, program_number: int) -> dict[str, Any]:
-        """Return the live detail used by VEGGA for one A-5500 program."""
-        if not self.device_id:
-            raise VeggaApiError("No se ha seleccionado ningún controlador")
-        data = await self._request(
-            "GET", f"/units/{self.device_id}/programs/{program_number}"
-        )
-        if isinstance(data, dict):
-            for key in ("content", "data", "program"):
-                nested = data.get(key)
-                if isinstance(nested, dict):
-                    return dict(nested)
-            return dict(data)
-        raise VeggaApiError(
-            f"Formato de detalle del programa {program_number} no reconocido"
-        )
 
     @staticmethod
     def _extract_nested_list(data: Any, preferred_keys: tuple[str, ...]) -> list[dict[str, Any]]:

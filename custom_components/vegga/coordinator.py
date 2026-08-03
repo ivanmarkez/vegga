@@ -63,47 +63,10 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             or now - self.last_history_update >= timedelta(minutes=HISTORY_REFRESH_MINUTES)
         )
 
-    @staticmethod
-    def _controller_bool(value: Any) -> bool | None:
-        """Parse the boolean/integer flags returned by Agrónic."""
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return value != 0
-        if isinstance(value, str):
-            normalized = value.strip().casefold()
-            if normalized in {"1", "true", "on", "yes", "si", "sí"}:
-                return True
-            if normalized in {"0", "false", "off", "no"}:
-                return False
-        return None
-
-    def _sync_sector_modes_from_controller(
-        self, sectors: list[dict[str, Any]]
-    ) -> None:
-        """Synchronize HA selectors with the real A-5500 manual state."""
-        for fallback, sector in enumerate(sectors, start=1):
-            if not isinstance(sector, dict):
-                continue
-            manual = self._controller_bool(sector.get("xManual"))
-            if manual is None:
-                # Do not replace a locally known mode when this firmware omits
-                # the authoritative manual/automatic flag.
-                continue
-            number = self._sector_number(sector, fallback)
-            if not manual:
-                self.sector_modes[number] = "Automático"
-                continue
-            start_stop = self._controller_bool(sector.get("xStartStop"))
-            self.sector_modes[number] = (
-                "Marcha manual" if start_stop is not False else "Paro manual"
-            )
-
     async def _async_update_data(self) -> dict[str, list[dict[str, Any]]]:
         try:
             programs = await self.api.get_programs()
             sectors = await self.api.get_sectors()
-            self._sync_sector_modes_from_controller(sectors)
             unit_status = await self.api.get_unit_status()
             now = datetime.now(timezone.utc)
 
@@ -115,84 +78,6 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
             except VeggaApiError as err:
                 irrigating_sectors = []
                 _LOGGER.debug("No se pudo actualizar el estado de riego VEGGA: %s", err)
-
-            # The general A-5500 program list may report activity while omitting
-            # the live counter (and even returning subprograms=null). VEGGA
-            # fetches /programs/{id} when opening an active program; do the same
-            # only for the small set of programs currently referenced as active.
-            active_program_numbers: set[int] = set()
-            for fallback, program in enumerate(programs, start=1):
-                if not isinstance(program, dict):
-                    continue
-                try:
-                    state = int(program.get("xState", 0))
-                except (TypeError, ValueError):
-                    state = 0
-                if state != 0:
-                    pk = program.get("pk")
-                    raw_number = next(
-                        (
-                            program.get(key)
-                            for key in ("number", "program", "programNumber", "id")
-                            if program.get(key) not in (None, "")
-                        ),
-                        pk.get("id") if isinstance(pk, dict) else fallback,
-                    )
-                    try:
-                        active_program_numbers.add(int(raw_number))
-                    except (TypeError, ValueError):
-                        active_program_numbers.add(fallback)
-            for sector in irrigating_sectors:
-                if not isinstance(sector, dict):
-                    continue
-                try:
-                    number = int(sector.get("xProgramN", 0))
-                except (TypeError, ValueError):
-                    number = 0
-                if number > 0:
-                    active_program_numbers.add(number)
-
-            active_program_details: dict[int, dict[str, Any]] = {}
-            for number in sorted(active_program_numbers):
-                try:
-                    active_program_details[number] = (
-                        await self.api.get_program_detail(number)
-                    )
-                except VeggaApiError as err:
-                    _LOGGER.debug(
-                        "No se pudo actualizar el detalle del programa %s: %s",
-                        number,
-                        err,
-                    )
-
-            # Sensor endpoints are optional on some Agrónic configurations.
-            # Keep each source independent so a missing probe or meter never
-            # makes irrigation controls unavailable.
-            try:
-                analogs = await self.api.get_analog_sensors()
-            except VeggaApiError as err:
-                analogs = []
-                _LOGGER.debug("No se pudieron actualizar los sensores analógicos VEGGA: %s", err)
-            try:
-                analog_formats = await self.api.get_analog_formats()
-            except VeggaApiError as err:
-                analog_formats = []
-                _LOGGER.debug("No se pudieron actualizar los formatos analógicos VEGGA: %s", err)
-            try:
-                meters = await self.api.get_meters()
-            except VeggaApiError as err:
-                meters = []
-                _LOGGER.debug("No se pudieron actualizar los caudalímetros VEGGA: %s", err)
-            try:
-                conditioners = await self.api.get_conditioners()
-            except VeggaApiError as err:
-                conditioners = []
-                _LOGGER.debug("No se pudieron actualizar los condicionantes VEGGA: %s", err)
-            try:
-                fertilizer_config = await self.api.get_fertilizer_config()
-            except VeggaApiError as err:
-                fertilizer_config = {}
-                _LOGGER.debug("No se pudo actualizar la configuración de fertilización VEGGA: %s", err)
 
             if self._history_due(now):
                 try:
@@ -313,20 +198,7 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
                     _LOGGER.warning("No se pudo actualizar el histórico VEGGA: %s", err)
 
             self.last_successful_update = now
-            return {
-                "programs": programs,
-                "active_program_details": active_program_details,
-                "sectors": sectors,
-                "irrigating_sectors": irrigating_sectors,
-                "unit_status": unit_status,
-                "analogs": analogs,
-                "analog_formats": analog_formats,
-                "meters": meters,
-                "conditioners": conditioners,
-                "fertilizer_config": fertilizer_config,
-                "history": self._history,
-                "history_debug": dict(self.api.history_debug),
-            }
+            return {"programs": programs, "sectors": sectors, "irrigating_sectors": irrigating_sectors, "unit_status": unit_status, "history": self._history, "history_debug": dict(self.api.history_debug)}
         except VeggaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except VeggaApiError as err:
@@ -367,3 +239,4 @@ class VeggaCoordinator(DataUpdateCoordinator[dict[str, list[dict[str, Any]]]]):
         """Clear a staged sector mode after it has been applied."""
         self.pending_sector_modes.pop(sector_number, None)
         self.async_update_listeners()
+

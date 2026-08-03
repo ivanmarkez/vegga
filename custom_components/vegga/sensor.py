@@ -1,22 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-import re
-import unicodedata
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .entity import VeggaEntity, VeggaSectorEntity
 from .history import analyse_sector, sector_volume_for_date
-from .runtime import active_sector_numbers
 
 
 def _program_name(program: dict[str, Any], fallback: int) -> str:
@@ -28,12 +24,7 @@ def _program_name(program: dict[str, Any], fallback: int) -> str:
 
 
 def _is_active(item: dict[str, Any]) -> bool:
-    if item.get("xStatus") is not None:
-        try:
-            return int(item["xStatus"]) not in {0, 3, 5, 6}
-        except (TypeError, ValueError):
-            pass
-    for key in ("active", "isActive", "running", "isRunning", "executing", "inProgress", "irrigation", "irrigating"):
+    for key in ("active", "isActive", "running", "isRunning", "executing", "inProgress", "enabled", "irrigating"):
         value = item.get(key)
         if isinstance(value, bool):
             return value
@@ -109,327 +100,6 @@ def _sample_payload(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def _normalized_text(value: Any) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    return "".join(char for char in text if not unicodedata.combining(char)).casefold()
-
-
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        match = re.search(r"[-+]?\d+(?:[.,]\d+)?", value)
-        if match:
-            try:
-                return float(match.group().replace(",", "."))
-            except ValueError:
-                pass
-    return None
-
-
-def _analog_format(data: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
-    formats = data.get("analog_formats", [])
-    try:
-        format_id = int(row.get("formatId"))
-    except (TypeError, ValueError):
-        return {}
-    if 1 <= format_id <= len(formats) and isinstance(formats[format_id - 1], dict):
-        return formats[format_id - 1]
-    for item in formats:
-        if not isinstance(item, dict):
-            continue
-        pk = item.get("pk")
-        candidates = (item.get("id"), pk.get("id") if isinstance(pk, dict) else None)
-        if format_id in candidates:
-            return item
-    return {}
-
-
-def _analog_unit(fmt: dict[str, Any]) -> str | None:
-    for key in ("units", "unit", "suffix", "symbol"):
-        if fmt.get(key):
-            return str(fmt[key]).strip()
-    pattern = fmt.get("format")
-    if isinstance(pattern, str):
-        parts = pattern.strip().split()
-        if len(parts) > 1:
-            return parts[-1]
-    return None
-
-
-def _find_nested_value(value: Any, wanted_key: str) -> Any:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            if str(key).casefold() == wanted_key.casefold():
-                return child
-        for child in value.values():
-            found = _find_nested_value(child, wanted_key)
-            if found not in (None, "", 0, "0"):
-                return found
-    elif isinstance(value, list):
-        for child in value:
-            found = _find_nested_value(child, wanted_key)
-            if found not in (None, "", 0, "0"):
-                return found
-    return None
-
-
-def _analog_row(data: dict[str, Any], kind: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
-    # This is the selection rule used by VEGGA for A-5500: checkCE/checkPH
-    # contain the one-based analogue input assigned to fertilization control.
-    config_keys = {
-        "ph": ("checkPH", "securityPH"),
-        "ec": ("checkCE", "securityCE"),
-        "pressure": (),
-    }[kind]
-    configured_input = None
-    for config_key in config_keys:
-        configured_input = _find_nested_value(data.get("unit_status"), config_key)
-        if configured_input in (None, "", 0, "0"):
-            configured_input = _find_nested_value(data.get("fertilizer_config"), config_key)
-        if configured_input not in (None, "", 0, "0"):
-            break
-    try:
-        configured_input = int(configured_input)
-    except (TypeError, ValueError):
-        configured_input = 0
-
-    analogs = [row for row in data.get("analogs", []) if isinstance(row, dict)]
-    if configured_input > 0:
-        for position, row in enumerate(analogs, start=1):
-            pk = row.get("pk")
-            candidates = (
-                position,
-                row.get("input"),
-                row.get("id"),
-                pk.get("id") if isinstance(pk, dict) else None,
-            )
-            for candidate in candidates:
-                try:
-                    if int(candidate) == configured_input:
-                        return row, _analog_format(data, row)
-                except (TypeError, ValueError):
-                    continue
-
-    for row in data.get("analogs", []):
-        if not isinstance(row, dict) or row.get("input") == 0:
-            continue
-        fmt = _analog_format(data, row)
-        label = " ".join(
-            str(row.get(key, "")) for key in ("name", "description", "label", "sensorName")
-        )
-        haystack = f"{_normalized_text(label)} {_normalized_text(_analog_unit(fmt))}"
-        if kind == "ph" and re.search(r"(^|[^a-z])ph([^a-z]|$)", haystack):
-            return row, fmt
-        if kind == "ec" and (
-            "conductividad" in haystack
-            or "conductivity" in haystack
-            or re.search(r"(^|[^a-z])(ce|ec|ms)([^a-z]|$)", haystack)
-        ):
-            return row, fmt
-        if kind == "pressure" and (
-            "presion" in haystack
-            or "pressure" in haystack
-            or re.search(r"(^|[^a-z])(bar|bars)([^a-z]|$)", haystack)
-        ):
-            return row, fmt
-
-    # Confirmed directly in VEGGA for Agrónic 17669 (A-5500 firmware 1.32):
-    # analogue 1 is EC and analogue 2 is pH. The controller does not expose
-    # checkPH/checkCE in this configuration, so use their visible positions.
-    fallback_position = {"ec": 1, "ph": 2, "pressure": 3}[kind]
-    if len(analogs) >= fallback_position:
-        row = analogs[fallback_position - 1]
-        return row, _analog_format(data, row)
-    return None
-
-
-def _analog_value(
-    row: dict[str, Any],
-    fmt: dict[str, Any],
-    *,
-    default_decimals: int = 0,
-    force_decimals: int | None = None,
-) -> float | None:
-    for key in ("formattedValue", "reading"):
-        value = _number(row.get(key))
-        if value is not None:
-            return value
-    value = _number(row.get("xValue"))
-    if value is None:
-        value = _number(row.get("currentValue"))
-    if value is None:
-        value = _number(row.get("value"))
-    if value is None:
-        return None
-    try:
-        decimals = force_decimals if force_decimals is not None else int(
-            fmt.get("decimals", default_decimals)
-        )
-    except (TypeError, ValueError):
-        decimals = default_decimals
-    return value / (10 ** decimals)
-
-
-def _ph_regulation_value(data: dict[str, Any]) -> float | None:
-    """Return the live pH value exposed by A-5500 regulation."""
-    fertilizer = _find_nested_value(data.get("unit_status"), "fertilizer")
-    if not isinstance(fertilizer, dict):
-        fertilizer = _find_nested_value(data.get("fertilizer_config"), "fertilizer")
-    if not isinstance(fertilizer, dict):
-        return None
-    regulations = fertilizer.get("pidRegulation")
-    if not isinstance(regulations, list) or len(regulations) < 2:
-        return None
-    ph_regulation = regulations[1]
-    if not isinstance(ph_regulation, dict):
-        return None
-    value = _number(ph_regulation.get("xValue"))
-    if value is None:
-        return None
-    return value / 10 if abs(value) > 14 else value
-
-
-def _meter_row(data: dict[str, Any]) -> dict[str, Any] | None:
-    rows = [row for row in data.get("meters", []) if isinstance(row, dict)]
-    configured = [row for row in rows if row.get("input") not in (None, 0, "0")]
-    return (configured or rows or [None])[0]
-
-
-class VeggaAnalogSensor(VeggaEntity, SensorEntity):
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, coordinator, kind: str) -> None:
-        super().__init__(coordinator)
-        self._kind = kind
-        self._attr_name = {
-            "ph": "pH",
-            "ec": "Conductividad",
-            "pressure": "Presión",
-        }[kind]
-        self._attr_icon = {
-            "ph": "mdi:ph",
-            "ec": "mdi:flash",
-            "pressure": "mdi:gauge",
-        }[kind]
-        self._attr_unique_id = f"{coordinator.api.device_id}_{kind}"
-
-    def _source(self):
-        return _analog_row(self.coordinator.data or {}, self._kind)
-
-    @property
-    def native_value(self) -> float | None:
-        source = self._source()
-        if source:
-            value = _analog_value(*source, default_decimals=1, force_decimals=1)
-            if value is not None:
-                return value
-        return _ph_regulation_value(self.coordinator.data or {}) if self._kind == "ph" else None
-
-    @property
-    def native_unit_of_measurement(self) -> str | None:
-        source = self._source()
-        unit = _analog_unit(source[1]) if source else None
-        return unit or {"ph": "pH", "ec": "mS", "pressure": "bar"}[self._kind]
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        source = self._source()
-        config_keys = {
-            "ph": ("checkPH", "securityPH"),
-            "ec": ("checkCE", "securityCE"),
-            "pressure": (),
-        }[self._kind]
-        configured_input = None
-        configured_from = None
-        for config_key in config_keys:
-            configured_input = _find_nested_value(
-                (self.coordinator.data or {}).get("unit_status"), config_key
-            )
-            if configured_input in (None, "", 0, "0"):
-                configured_input = _find_nested_value(
-                    (self.coordinator.data or {}).get("fertilizer_config"), config_key
-                )
-            if configured_input not in (None, "", 0, "0"):
-                configured_from = config_key
-                break
-        return {
-            "source": "VEGGA analogs",
-            "configured_analog": configured_input,
-            "configured_from": configured_from,
-            "input": source[0].get("input") if source else None,
-            "analog_id": (
-                source[0].get("pk", {}).get("id")
-                if source and isinstance(source[0].get("pk"), dict)
-                else source[0].get("id") if source else None
-            ),
-            "format_id": source[0].get("formatId") if source else None,
-            "raw_value": source[0].get("xValue") if source else None,
-            "regulation_value": (
-                _ph_regulation_value(self.coordinator.data or {})
-                if self._kind == "ph"
-                else None
-            ),
-            "analog_count": len((self.coordinator.data or {}).get("analogs", [])),
-        }
-
-
-class VeggaPressureSensor(VeggaAnalogSensor):
-    """Pressure from the third analogue input of Agrónic 17669."""
-
-    def __init__(self, coordinator) -> None:
-        super().__init__(coordinator, "pressure")
-        # Use a fresh, explicit registry id so Home Assistant cannot retain a
-        # failed generic pressure entity from a previous platform load.
-        self._attr_unique_id = f"{coordinator.api.device_id}_analog_pressure"
-
-    @property
-    def native_unit_of_measurement(self) -> str:
-        return "bar"
-
-
-class VeggaFlowMeterSensor(VeggaEntity, SensorEntity):
-    _attr_name = "Caudalímetro"
-    _attr_icon = "mdi:water-pump"
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, coordinator) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.api.device_id}_flow_meter"
-
-    @property
-    def native_value(self) -> float | None:
-        row = _meter_row(self.coordinator.data or {})
-        if not row:
-            return None
-        direct = _number(row.get("value"))
-        if direct is not None:
-            return direct
-        raw = _number(row.get("xFlow"))
-        return raw / 100 if raw is not None else None
-
-    @property
-    def native_unit_of_measurement(self) -> str:
-        row = _meter_row(self.coordinator.data or {}) or {}
-        units = {0: "m³/h", 1: "L/h", 2: "L/s"}
-        try:
-            return units.get(int(row.get("flowFormat")), "m³/h")
-        except (TypeError, ValueError):
-            return "m³/h"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        row = _meter_row(self.coordinator.data or {}) or {}
-        return {
-            "source": "VEGGA meters",
-            "input": row.get("input"),
-            "active": row.get("xActive", row.get("active")),
-            "raw_flow": row.get("xFlow"),
-        }
-
-
 def _find_active_refs(payload: Any, kind: str) -> list[dict[str, Any]]:
     """Best-effort extraction of active program/sector references."""
     results: list[dict[str, Any]] = []
@@ -476,34 +146,17 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-
-    # Remove obsolete entities that were created by earlier releases but are
-    # no longer backed by a working data source. Merely ceasing to add them
-    # leaves grey "No disponible" entries in Home Assistant's registry.
-    registry = er.async_get(hass)
-    obsolete_unique_ids = (
-        f"{coordinator.api.device_id}_pressure",
-        f"{coordinator.api.device_id}_history_anomaly_count",
-    )
-    for unique_id in obsolete_unique_ids:
-        entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-        if entity_id is not None:
-            registry.async_remove(entity_id)
-
     entities: list[SensorEntity] = [
         VeggaProgramsSensor(coordinator),
         VeggaActiveProgramsSensor(coordinator),
         VeggaSectorsSensor(coordinator),
         VeggaActiveSectorsSensor(coordinator),
+        VeggaAnomalyCountSensor(coordinator),
         VeggaLastCommandSensor(coordinator),
         VeggaLastUpdateSensor(coordinator),
         VeggaLastHistoryUpdateSensor(coordinator),
         VeggaHistoryDiagnosticSensor(coordinator),
         VeggaLiveStatusDiagnosticSensor(coordinator),
-        VeggaAnalogSensor(coordinator, "ph"),
-        VeggaAnalogSensor(coordinator, "ec"),
-        VeggaPressureSensor(coordinator),
-        VeggaFlowMeterSensor(coordinator),
     ]
     for fallback, sector in enumerate((coordinator.data or {}).get("sectors", []), start=1):
         number = _sector_number(sector, fallback)
@@ -562,12 +215,6 @@ class VeggaActiveProgramsSensor(VeggaEntity, SensorEntity):
                     numbers.append(int(item.get("reference")))
                 except (TypeError, ValueError):
                     pass
-        if not any(numbers):
-            numbers = [
-                index
-                for index, program in enumerate(data.get("programs", []), start=1)
-                if isinstance(program, dict) and _is_active(program)
-            ]
         names: list[str] = []
         programs = data.get("programs", [])
         for number in numbers:
@@ -619,8 +266,19 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
         runtime = data.get("irrigating_sectors", [])
-        sectors = data.get("sectors", [])
-        numbers = sorted(active_sector_numbers(runtime, sectors))
+        numbers = [
+            _runtime_sector_number(item, index)
+            for index, item in enumerate(runtime, start=1)
+            if isinstance(item, dict) and (_runtime_program_number(item) > 0 or _is_active(item))
+        ]
+        # The endpoint is already filtered with irrigation=true. Some firmware
+        # versions omit an explicit active flag but still return only active rows.
+        if runtime and not numbers:
+            numbers = [
+                _runtime_sector_number(item, index)
+                for index, item in enumerate(runtime, start=1)
+                if isinstance(item, dict)
+            ]
         if not numbers:
             refs = _find_active_refs(data.get("unit_status"), "sector")
             numbers = []
@@ -629,6 +287,7 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
                     numbers.append(int(item.get("reference")))
                 except (TypeError, ValueError):
                     pass
+        sectors = data.get("sectors", [])
         names: list[str] = []
         for number in numbers:
             if 1 <= number <= len(sectors):
@@ -664,19 +323,10 @@ class VeggaLiveStatusDiagnosticSensor(VeggaEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         payload = (self.coordinator.data or {}).get("unit_status")
-        runtime = (self.coordinator.data or {}).get("irrigating_sectors", [])
         return {
             "top_level_keys": list(payload.keys()) if isinstance(payload, dict) else [],
             "active_program_candidates": _find_active_refs(payload, "program"),
             "active_sector_candidates": _find_active_refs(payload, "sector"),
-            "irrigating_sector_row_count": len(runtime) if isinstance(runtime, list) else 0,
-            "irrigating_sector_sample": _sample_payload(runtime),
-            "analog_sensor_count": len((self.coordinator.data or {}).get("analogs", [])),
-            "analog_sensor_sample": _sample_payload((self.coordinator.data or {}).get("analogs", [])),
-            "analog_format_sample": _sample_payload((self.coordinator.data or {}).get("analog_formats", [])),
-            "fertilizer_config_sample": _sample_payload((self.coordinator.data or {}).get("fertilizer_config")),
-            "meter_count": len((self.coordinator.data or {}).get("meters", [])),
-            "meter_sample": _sample_payload((self.coordinator.data or {}).get("meters", [])),
             "response_sample": _sample_payload(payload),
         }
 
