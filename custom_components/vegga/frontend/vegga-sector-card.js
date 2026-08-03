@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.26";
+const CARD_VERSION = "0.4.28";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -60,6 +60,30 @@ class VeggaSectorCard extends HTMLElement {
       this._config?.entity ||
       "Sector VEGGA"
     ).replace(/ Modo de funcionamiento$/i, "");
+  }
+
+  async _openSectorDevice() {
+    if (!this._hass || !this._config?.entity) return;
+
+    try {
+      const registryEntry = await this._hass.callWS({
+        type: "config/entity_registry/get",
+        entity_id: this._config.entity,
+      });
+      const deviceId = registryEntry?.device_id;
+      if (!deviceId) throw new Error("La entidad no tiene un dispositivo asociado");
+
+      const path = `/config/devices/device/${deviceId}`;
+      history.pushState(null, "", path);
+      window.dispatchEvent(new Event("location-changed"));
+    } catch (error) {
+      console.error("VEGGA: no se pudo abrir la ficha del sector", error);
+      this.dispatchEvent(new CustomEvent("hass-more-info", {
+        bubbles: true,
+        composed: true,
+        detail: { entityId: this._config.entity },
+      }));
+    }
   }
 
   _openConfirmation(mode) {
@@ -126,7 +150,8 @@ class VeggaSectorCard extends HTMLElement {
         ha-card { padding: 18px; overflow: hidden; }
         .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
         .title { min-width: 0; }
-        .name { font-size: 1.1rem; font-weight: 600; color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .name { font-size: 1.1rem; font-weight: 600; color: var(--primary-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color .12s ease; }
+        .name:hover { text-decoration-color: currentColor; }
         .subtitle { margin-top: 4px; color: var(--secondary-text-color); font-size: .9rem; }
         .status { padding: 5px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; background: var(--secondary-background-color); white-space: nowrap; }
         .status.unavailable { color: var(--error-color); }
@@ -166,7 +191,7 @@ class VeggaSectorCard extends HTMLElement {
       <ha-card>
         <div class="header">
           <div class="title">
-            <div class="name">${this._escape(name)}</div>
+            <div class="name" role="link" tabindex="0" title="Abrir ficha del sector">${this._escape(name)}</div>
             <div class="subtitle">Modo actual: ${this._escape(currentMode)}</div>
           </div>
           <div class="status ${available ? "" : "unavailable"}">${available ? "Conectado" : "No disponible"}</div>
@@ -196,6 +221,15 @@ class VeggaSectorCard extends HTMLElement {
         </div>
       </dialog>
     `;
+
+    const nameLink = this.shadowRoot.querySelector(".name");
+    nameLink?.addEventListener("click", () => this._openSectorDevice());
+    nameLink?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        this._openSectorDevice();
+      }
+    });
 
     this.shadowRoot.querySelectorAll("button.mode").forEach((button) => {
       button.addEventListener("click", () => this._openConfirmation(button.dataset.mode));
