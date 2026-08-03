@@ -662,6 +662,8 @@ class VeggaSectorLastIrrigationSensor(_VeggaSectorAnalysisSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         analysis = self._analysis()
         return {
+            "sector_number": self._number,
+            "sector_name": self._sector_name,
             "started_at": analysis.last_started_at,
             "ended_at": analysis.last_ended_at,
             "duration_minutes": analysis.last_duration_minutes,
@@ -686,6 +688,13 @@ class VeggaSectorLastDurationSensor(_VeggaSectorAnalysisSensor):
     def native_value(self) -> float | None:
         value = self._analysis().last_duration_minutes
         return round(value, 1) if value is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "sector_number": self._number,
+            "sector_name": self._sector_name,
+        }
 
 
 class VeggaSectorExpectedFlowSensor(_VeggaSectorAnalysisSensor):
