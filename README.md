@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.5.16
+# VEGGA Agrónic para Home Assistant — v0.5.17
 
 - Corrige las horas reales usando los cambios de estado registrados por Home Assistant.
 - El inicio es el primer cambio real a `on` del sector durante el día.
@@ -7,6 +7,15 @@
 - Mantiene el mismo recurso frontend y el mismo YAML.
 
 
+
+## Cambios 0.5.17
+
+- Cambio exclusivo de la vista móvil del resumen de riego.
+- Añade un check de color en la misma línea del nombre del sector.
+- Verde cuando la diferencia respecto a ayer está dentro de ±10 %.
+- Naranja cuando la diferencia está entre ±10 % y ±20 %.
+- Rojo cuando supera ±20 %.
+- No modifica las cuatro casillas compactas ni la tabla de escritorio.
 
 ## Cambios 0.5.16
 
