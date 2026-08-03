@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.5.2
+# VEGGA Agrónic para Home Assistant — v0.5.4
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -80,3 +80,30 @@ order: oldest_first
 - La cabecera completa de cada tarjeta de sector abre la ficha real del dispositivo.
 - La tarjeta `VEGGA - Orden de riego` ordena los sectores regados hoy por hora real y muestra 1.º, 2.º, 3.º…
 - El recurso permanece en `/vegga_static/vegga-sector-card.js`; no hay que cambiar `?v=` en cada actualización.
+
+
+## 0.5.4 — Panel completo
+
+La vista VEGGA se divide en tres tarjetas, servidas por el mismo recurso estable `/vegga_static/vegga-overview-card.js`:
+
+- `custom:vegga-overview-card`: resumen, consumos e inicio/fin reales.
+- `custom:vegga-sector-controls-card`: todos los sectores con Automático, Marcha y Paro.
+- `custom:vegga-program-controls-card`: todos los programas con Iniciar y Parar.
+
+```yaml
+title: VEGGA
+path: vegga
+type: panel
+cards:
+  - type: vertical-stack
+    cards:
+      - type: custom:vegga-overview-card
+        controller: vivero_agronic_17669
+        title: Resumen de riego
+      - type: custom:vegga-sector-controls-card
+        controller: vivero_agronic_17669
+        title: Control de sectores
+      - type: custom:vegga-program-controls-card
+        controller: vivero_agronic_17669
+        title: Control de programas
+```

@@ -1,4 +1,42 @@
-const VEGGA_OVERVIEW_VERSION = "0.5.3";
+const VEGGA_UI_VERSION = "0.5.4";
+const VEGGA_SECTOR_MODES = [
+  { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
+  { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
+  { value: "Paro manual", short: "Paro", icon: "mdi:stop", cls: "stop" },
+];
+
+const VeggaUi = {
+  escape(value) {
+    return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+    }[char]));
+  },
+  prefix(config) {
+    return String(config?.controller || "").toLowerCase();
+  },
+  belongs(state, config) {
+    const stem = String(state?.entity_id || "").split(".")[1] || "";
+    return stem.startsWith(`${this.prefix(config)}_`);
+  },
+  number(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  },
+  notify(host, message) {
+    host.dispatchEvent(new CustomEvent("hass-notification", {
+      bubbles: true,
+      composed: true,
+      detail: { message },
+    }));
+  },
+  moreInfo(host, entityId) {
+    host.dispatchEvent(new CustomEvent("hass-more-info", {
+      bubbles: true,
+      composed: true,
+      detail: { entityId },
+    }));
+  },
+};
 
 class VeggaOverviewCard extends HTMLElement {
   constructor() {
@@ -17,7 +55,7 @@ class VeggaOverviewCard extends HTMLElement {
   setConfig(config) {
     if (!config?.controller) throw new Error("Debes indicar controller, por ejemplo: vivero_agronic_17669");
     this._config = {
-      title: "VEGGA",
+      title: "Resumen de riego",
       show_irrigation_order: true,
       show_sector_links: true,
       show_programs: true,
@@ -34,16 +72,11 @@ class VeggaOverviewCard extends HTMLElement {
   getCardSize() { return 12; }
   getGridOptions() { return { rows: 12, columns: 12, min_rows: 5, min_columns: 6 }; }
 
-  _prefix() { return String(this._config?.controller || "").toLowerCase(); }
+  _prefix() { return VeggaUi.prefix(this._config); }
   _state(id) { return this._hass?.states?.[id] || null; }
   _allStates() { return Object.values(this._hass?.states || {}); }
-  _escape(value) {
-    return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
-  }
-  _number(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  }
+  _escape(value) { return VeggaUi.escape(value); }
+  _number(value) { return VeggaUi.number(value); }
   _format(value, decimals = 2) {
     const n = this._number(value);
     return n === null ? "—" : n.toLocaleString("es-ES", { maximumFractionDigits: decimals });
@@ -57,43 +90,42 @@ class VeggaOverviewCard extends HTMLElement {
       .replace(/\s+(Consumo último riego|Consumo|Último riego|Duración último riego|Programas relacionados)$/i, "")
       .trim();
   }
-  _belongsToController(state) {
-    const id = state?.entity_id || "";
-    return id.split(".")[1]?.startsWith(`${this._prefix()}_`);
-  }
+  _belongsToController(state) { return VeggaUi.belongs(state, this._config); }
   _sectorNumber(state) {
     const n = Number(state?.attributes?.sector_number);
     return Number.isFinite(n) ? n : null;
   }
 
   _findSectorState(number, predicate) {
-    return this._allStates().find(s => this._belongsToController(s) && this._sectorNumber(s) === number && predicate(s)) || null;
+    return this._allStates().find((state) =>
+      this._belongsToController(state) && this._sectorNumber(state) === number && predicate(state)
+    ) || null;
   }
 
   _sectors() {
-    const candidates = this._allStates().filter(s =>
-      this._belongsToController(s) &&
-      this._sectorNumber(s) !== null &&
-      Object.prototype.hasOwnProperty.call(s.attributes || {}, "yesterday_volume_m3")
+    const candidates = this._allStates().filter((state) =>
+      this._belongsToController(state) &&
+      this._sectorNumber(state) !== null &&
+      Object.prototype.hasOwnProperty.call(state.attributes || {}, "yesterday_volume_m3")
     );
 
-    return candidates.map(consumption => {
+    return candidates.map((consumption) => {
       const number = this._sectorNumber(consumption);
-      const status = this._findSectorState(number, s =>
-        s.entity_id.startsWith("binary_sensor.") &&
-        (s.attributes?.device_class === "running" || /riego_activo/.test(s.entity_id) || /Riego activo$/i.test(s.attributes?.friendly_name || ""))
+      const status = this._findSectorState(number, (state) =>
+        state.entity_id.startsWith("binary_sensor.") &&
+        (state.attributes?.device_class === "running" || /riego_activo/.test(state.entity_id) || /Riego activo$/i.test(state.attributes?.friendly_name || ""))
       );
-      const last = this._findSectorState(number, s =>
-        s.attributes?.started_at !== undefined || s.attributes?.ended_at !== undefined ||
-        /ultimo_riego|último_riego/.test(s.entity_id)
+      const last = this._findSectorState(number, (state) =>
+        state.attributes?.started_at !== undefined || state.attributes?.ended_at !== undefined ||
+        /ultimo_riego|último_riego/.test(state.entity_id)
       );
-      const duration = this._findSectorState(number, s =>
-        s.entity_id.startsWith("sensor.") && s.attributes?.unit_of_measurement === "min"
+      const duration = this._findSectorState(number, (state) =>
+        state.entity_id.startsWith("sensor.") && state.attributes?.unit_of_measurement === "min"
       );
-      const programs = this._findSectorState(number, s =>
-        Array.isArray(s.attributes?.programs) || s.attributes?.program_count !== undefined
+      const programs = this._findSectorState(number, (state) =>
+        Array.isArray(state.attributes?.programs) || state.attributes?.program_count !== undefined
       );
-      const select = this._findSectorState(number, s => s.entity_id.startsWith("select."));
+      const select = this._findSectorState(number, (state) => state.entity_id.startsWith("select."));
       return {
         number,
         name: this._friendly(consumption, `Sector ${number}`),
@@ -109,8 +141,8 @@ class VeggaOverviewCard extends HTMLElement {
 
   _date(value) {
     if (!value) return null;
-    const d = value instanceof Date ? value : new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
   }
 
   _sameLocalDay(a, b = new Date()) {
@@ -118,17 +150,17 @@ class VeggaOverviewCard extends HTMLElement {
   }
 
   _clock(value) {
-    const d = this._date(value);
-    return d ? d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—";
+    const date = this._date(value);
+    return date ? date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—";
   }
 
   _actualMoment(value) {
-    const d = this._date(value);
-    if (!d) return "—";
-    const time = this._clock(d);
-    return this._sameLocalDay(d)
+    const date = this._date(value);
+    if (!date) return "—";
+    const time = this._clock(date);
+    return this._sameLocalDay(date)
       ? time
-      : `${d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" })} · ${time}`;
+      : `${date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" })} · ${time}`;
   }
 
   _actualTimes(sector) {
@@ -138,18 +170,12 @@ class VeggaOverviewCard extends HTMLElement {
     let ended = this._date(attrs.ended_at || consumptionAttrs.last_ended_at);
     const active = sector.status?.state === "on";
 
-    // While a sector is running, Home Assistant's state transition is the real
-    // moment at which the integration detected that it started. Prefer it when
-    // it is newer than the latest completed history record.
     if (active) {
       const stateStarted = this._date(sector.status?.last_changed);
       if (stateStarted && (!started || stateStarted > started)) started = stateStarted;
       ended = null;
     }
 
-    // Some VEGGA history payloads expose actual start + actual duration but no
-    // explicit end timestamp. In that case the end is derived from those two
-    // real measurements, never from the programmed schedule.
     if (!active && started && !ended) {
       const durationValue = sector.duration?.state ?? attrs.duration_minutes ?? consumptionAttrs.last_duration_minutes;
       const durationMinutes = this._number(durationValue);
@@ -164,8 +190,8 @@ class VeggaOverviewCard extends HTMLElement {
   _todayIrrigations(sectors) {
     const now = new Date();
     return sectors
-      .map(sector => ({ ...sector, actual: this._actualTimes(sector) }))
-      .filter(sector => this._sameLocalDay(sector.actual.started, now) || this._sameLocalDay(sector.actual.ended, now))
+      .map((sector) => ({ ...sector, actual: this._actualTimes(sector) }))
+      .filter((sector) => this._sameLocalDay(sector.actual.started, now) || this._sameLocalDay(sector.actual.ended, now))
       .sort((a, b) => (a.actual.started || a.actual.ended) - (b.actual.started || b.actual.ended));
   }
 
@@ -173,8 +199,8 @@ class VeggaOverviewCard extends HTMLElement {
     if (this._registry) return this._registry;
     if (this._registryPromise) return this._registryPromise;
     this._registryPromise = this._hass.callWS({ type: "config/entity_registry/list" })
-      .then(entries => {
-        this._registry = new Map(entries.map(e => [e.entity_id, e]));
+      .then((entries) => {
+        this._registry = new Map(entries.map((entry) => [entry.entity_id, entry]));
         return this._registry;
       })
       .catch(() => new Map());
@@ -191,16 +217,19 @@ class VeggaOverviewCard extends HTMLElement {
         window.dispatchEvent(new Event("location-changed"));
         return;
       }
-    } catch (_) {}
-    this.dispatchEvent(new CustomEvent("hass-more-info", { bubbles: true, composed: true, detail: { entityId } }));
+    } catch (_) {
+      // Fall back to more-info below.
+    }
+    VeggaUi.moreInfo(this, entityId);
   }
 
   _delta(today, yesterday) {
-    const t = this._number(today), y = this._number(yesterday);
-    if (t === null || y === null || y === 0) return { text: "—", cls: "neutral" };
-    const d = ((t - y) / y) * 100;
-    const cls = Math.abs(d) <= 10 ? "good" : Math.abs(d) <= 20 ? "warn" : "bad";
-    return { text: `${d > 0 ? "+" : ""}${Math.round(d)}%`, cls };
+    const current = this._number(today);
+    const previous = this._number(yesterday);
+    if (current === null || previous === null || previous === 0) return { text: "—", cls: "neutral" };
+    const delta = ((current - previous) / previous) * 100;
+    const cls = Math.abs(delta) <= 10 ? "good" : Math.abs(delta) <= 20 ? "warn" : "bad";
+    return { text: `${delta > 0 ? "+" : ""}${Math.round(delta)}%`, cls };
   }
 
   _summaryCard(icon, title, value, subtitle = "") {
@@ -218,16 +247,16 @@ class VeggaOverviewCard extends HTMLElement {
     const updated = this._state(`sensor.${prefix}_ultima_actualizacion_del_historico`);
     const connected = connection?.state === "on";
 
-    const sectorRows = sectors.map(s => {
-      const today = s.consumption?.state;
-      const yesterday = s.consumption?.attributes?.yesterday_volume_m3;
+    const sectorRows = sectors.map((sector) => {
+      const today = sector.consumption?.state;
+      const yesterday = sector.consumption?.attributes?.yesterday_volume_m3;
       const delta = this._delta(today, yesterday);
-      const actual = this._actualTimes(s);
-      const programs = this._validState(s.programs) ? s.programs.state : "—";
+      const actual = this._actualTimes(sector);
+      const programs = this._validState(sector.programs) ? sector.programs.state : "—";
       const startedTitle = actual.started ? actual.started.toLocaleString("es-ES") : "Sin inicio real registrado";
       const endedTitle = actual.active ? "El sector continúa regando" : actual.ended ? actual.ended.toLocaleString("es-ES") : "Sin fin real registrado";
       return `<tr>
-        <td><button class="sector-name" data-entity="${this._escape(s.linkEntity)}">${this._escape(s.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
+        <td><button class="sector-name" data-entity="${this._escape(sector.linkEntity)}">${this._escape(sector.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
         <td class="center"><span class="dot ${actual.active ? "active" : ""}"></span></td>
         <td class="time" title="${this._escape(startedTitle)}">${this._actualMoment(actual.started)}</td>
         <td class="time ${actual.active ? "running" : ""}" title="${this._escape(endedTitle)}">${actual.active ? "En curso" : this._actualMoment(actual.ended)}</td>
@@ -238,26 +267,26 @@ class VeggaOverviewCard extends HTMLElement {
       </tr>`;
     }).join("");
 
-    const irrigationRows = irrigations.map((s, i) => {
-      const durationValue = s.duration?.state ?? s.last?.attributes?.duration_minutes ?? s.consumption?.attributes?.last_duration_minutes;
+    const irrigationRows = irrigations.map((sector, index) => {
+      const durationValue = sector.duration?.state ?? sector.last?.attributes?.duration_minutes ?? sector.consumption?.attributes?.last_duration_minutes;
       const duration = this._number(durationValue) === null ? "—" : `${this._format(durationValue, 0)} min`;
-      const volume = s.last?.attributes?.volume_m3 ?? s.consumption?.state;
+      const volume = sector.last?.attributes?.volume_m3 ?? sector.consumption?.state;
       return `<tr>
-        <td class="order">${i + 1}.º</td>
-        <td><button class="sector-name" data-entity="${this._escape(s.linkEntity)}">${this._escape(s.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
-        <td class="time">${this._clock(s.actual.started)}</td>
-        <td class="time ${s.actual.active ? "running" : ""}">${s.actual.active ? "En curso" : this._clock(s.actual.ended)}</td>
+        <td class="order">${index + 1}.º</td>
+        <td><button class="sector-name" data-entity="${this._escape(sector.linkEntity)}">${this._escape(sector.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
+        <td class="time">${this._clock(sector.actual.started)}</td>
+        <td class="time ${sector.actual.active ? "running" : ""}">${sector.actual.active ? "En curso" : this._clock(sector.actual.ended)}</td>
         <td class="num">${duration}</td>
         <td class="num">${this._format(volume)} m³</td>
       </tr>`;
     }).join("");
 
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section h3{margin:0 0 10px;font-size:1.05rem}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:680px}th,td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}tr:last-child td{border-bottom:0}.num{text-align:right;white-space:nowrap}.center{text-align:center}.time{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}.running{color:var(--success-color,#2e7d32);font-weight:700}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb)}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color)}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.order{font-weight:800;text-align:center}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}
+      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section h3{margin:0 0 10px;font-size:1.05rem}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:820px}th,td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}tr:last-child td{border-bottom:0}.num{text-align:right;white-space:nowrap}.center{text-align:center}.time{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}.running{color:var(--success-color,#2e7d32);font-weight:700}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb)}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color)}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.order{font-weight:800;text-align:center}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}
       @media(max-width:899px){.wrap{padding:12px}.summaries{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{padding:11px}.programs{display:none}table{min-width:760px}.titlebar h2{font-size:1.15rem}}
       @media(max-width:480px){.summaries{grid-template-columns:1fr 1fr;gap:7px}.summary ha-icon{--mdc-icon-size:23px}.summary-title{font-size:.82rem}.summary-value{font-size:.82rem}}
     </style><ha-card><div class="wrap">
-      <div class="titlebar"><h2>${this._escape(this._config.title)}</h2><span class="version">VEGGA ${VEGGA_OVERVIEW_VERSION}</span></div>
+      <div class="titlebar"><h2>${this._escape(this._config.title)}</h2><span class="version">VEGGA ${VEGGA_UI_VERSION}</span></div>
       <div class="summaries">
         ${this._summaryCard("mdi:monitor-dashboard", "VEGGA", connected ? "Conectado" : "Desconectado", connection?.attributes?.friendly_name || "")}
         ${this._summaryCard("mdi:pipe-valve", "Sectores activos", activeSectors?.state ?? "—", `${sectors.length} sectores`)}
@@ -268,13 +297,324 @@ class VeggaOverviewCard extends HTMLElement {
       <div class="section"><h3>Sectores</h3><div class="table-wrap">${sectors.length ? `<table><thead><tr><th>Sector</th><th>Estado</th><th>Inicio real</th><th>Fin real</th><th>Hoy</th><th>Ayer</th><th>Δ</th>${this._config.show_programs ? `<th class="programs">Programas relacionados</th>` : ""}</tr></thead><tbody>${sectorRows}</tbody></table>` : `<div class="empty">No se han encontrado sectores para el controlador indicado.</div>`}</div></div>
     </div></ha-card>`;
 
-    this.shadowRoot.querySelectorAll("button[data-entity]").forEach(btn => btn.addEventListener("click", () => this._openEntity(btn.dataset.entity)));
+    this.shadowRoot.querySelectorAll("button[data-entity]").forEach((button) => {
+      button.addEventListener("click", () => this._openEntity(button.dataset.entity));
+    });
+  }
+}
+
+class VeggaSectorControlsCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = null;
+    this._hass = null;
+    this._pending = null;
+    this._busy = false;
+    this._message = "";
+  }
+
+  static getStubConfig() {
+    return { controller: "vivero_agronic_17669", title: "Control de sectores" };
+  }
+
+  setConfig(config) {
+    if (!config?.controller) throw new Error("Debes indicar controller.");
+    this._config = { title: "Control de sectores", confirm: true, ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  getCardSize() { return 12; }
+  getGridOptions() { return { rows: 12, columns: 12, min_rows: 5, min_columns: 6 }; }
+
+  _sectorName(state) {
+    return String(state?.attributes?.friendly_name || state?.entity_id || "Sector")
+      .replace(/^Sector\s+/i, "")
+      .replace(/\s+Modo de funcionamiento$/i, "")
+      .trim();
+  }
+
+  _selects() {
+    return Object.values(this._hass?.states || {})
+      .filter((state) => {
+        if (!state.entity_id.startsWith("select.") || !VeggaUi.belongs(state, this._config)) return false;
+        const options = Array.isArray(state.attributes?.options) ? state.attributes.options : [];
+        return VEGGA_SECTOR_MODES.every((mode) => options.includes(mode.value)) || /Modo de funcionamiento$/i.test(state.attributes?.friendly_name || "");
+      })
+      .map((state) => ({ state, name: this._sectorName(state) }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base", numeric: true }));
+  }
+
+  _ask(entityId, option, name, current) {
+    if (this._busy || current === option) return;
+    this._pending = { entityId, option, name, current };
+    this._message = "";
+    this._render();
+    const dialog = this.shadowRoot.querySelector("dialog");
+    if (this._config.confirm === false) this._apply();
+    else if (dialog && !dialog.open) dialog.showModal();
+  }
+
+  _close() {
+    if (this._busy) return;
+    this.shadowRoot.querySelector("dialog")?.close();
+    this._pending = null;
+    this._message = "";
+    this._render();
+  }
+
+  async _apply() {
+    if (!this._hass || !this._pending || this._busy) return;
+    this._busy = true;
+    this._message = "Enviando orden al Agrónic…";
+    this._render();
+    this.shadowRoot.querySelector("dialog")?.showModal();
+    const pending = this._pending;
+    try {
+      await this._hass.callService("select", "select_option", {
+        entity_id: pending.entityId,
+        option: pending.option,
+      });
+      this._busy = false;
+      this._pending = null;
+      this._message = "";
+      this._render();
+      VeggaUi.notify(this, `${pending.name}: ${pending.option}`);
+    } catch (error) {
+      this._busy = false;
+      this._message = `No se pudo enviar la orden: ${error?.message || error}`;
+      this._render();
+      this.shadowRoot.querySelector("dialog")?.showModal();
+    }
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._config || !this._hass) return;
+    const sectors = this._selects();
+    const rows = sectors.map(({ state, name }) => {
+      const available = !["unknown", "unavailable", "none", ""].includes(String(state.state).toLowerCase());
+      return `<div class="sector-row">
+        <div class="sector-info">
+          <button class="name" data-info="${VeggaUi.escape(state.entity_id)}">${VeggaUi.escape(name)}<ha-icon icon="mdi:information-outline"></ha-icon></button>
+          <span class="current">Actual: <strong>${VeggaUi.escape(state.state)}</strong></span>
+        </div>
+        <div class="modes">
+          ${VEGGA_SECTOR_MODES.map((mode) => `<button class="mode ${mode.cls} ${state.state === mode.value ? "selected" : ""}" data-entity="${VeggaUi.escape(state.entity_id)}" data-option="${VeggaUi.escape(mode.value)}" data-name="${VeggaUi.escape(name)}" data-current="${VeggaUi.escape(state.state)}" ${!available || this._busy || state.state === mode.value ? "disabled" : ""}>
+            <ha-icon icon="${mode.icon}"></ha-icon><span>${mode.short}</span>
+          </button>`).join("")}
+        </div>
+      </div>`;
+    }).join("");
+
+    const pending = this._pending;
+    this.shadowRoot.innerHTML = `<style>
+      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.titlebar h2{margin:0;font-size:1.35rem}.count{color:var(--secondary-text-color);font-size:.82rem}.list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.sector-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(280px,1.35fr);align-items:center;gap:12px;padding:12px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.sector-info{min-width:0;display:flex;flex-direction:column;gap:4px}.name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:700;text-align:left;padding:0;cursor:pointer;display:flex;align-items:center;gap:5px;min-width:0}.name:hover{color:var(--primary-color)}.name ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color)}.current{font-size:.78rem;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.mode{min-height:48px;border:1px solid var(--divider-color);border-radius:11px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit;font-size:.8rem;font-weight:650;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px}.mode:hover:not(:disabled){border-color:var(--primary-color);transform:translateY(-1px)}.mode:disabled{cursor:default;opacity:.52}.mode.selected{border:2px solid var(--primary-color);background:color-mix(in srgb,var(--primary-color) 12%,var(--card-background-color));opacity:1}.mode ha-icon{--mdc-icon-size:20px}.auto ha-icon{color:var(--primary-color)}.start ha-icon{color:var(--success-color,#2e7d32)}.stop ha-icon{color:var(--error-color,#d32f2f)}.empty{padding:22px;text-align:center;color:var(--secondary-text-color);border:1px solid var(--divider-color);border-radius:14px}dialog{width:min(460px,calc(100vw - 28px));border:0;border-radius:18px;padding:0;color:var(--primary-text-color);background:var(--card-background-color);box-shadow:0 14px 44px rgba(0,0,0,.4)}dialog::backdrop{background:rgba(0,0,0,.58)}.dialog-body{padding:24px}.dialog-title{font-size:1.18rem;font-weight:750;display:flex;align-items:center;gap:9px}.dialog-title ha-icon{color:var(--warning-color,#f9a825)}.change{margin:17px 0;padding:14px;border-radius:12px;background:var(--secondary-background-color);line-height:1.5}.message{font-size:.9rem;color:var(--primary-color);margin-top:12px}.message.error{color:var(--error-color)}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}.dialog-actions button{min-height:42px;border-radius:10px;padding:0 16px;font:inherit;font-weight:700;cursor:pointer}.cancel{border:1px solid var(--divider-color);background:transparent;color:var(--primary-text-color)}.confirm{border:0;background:var(--primary-color);color:var(--text-primary-color,#fff)}
+      @media(max-width:1100px){.list{grid-template-columns:1fr}}
+      @media(max-width:600px){.wrap{padding:12px}.sector-row{grid-template-columns:1fr;gap:9px}.modes{gap:5px}.mode{min-height:50px;padding:4px;font-size:.76rem}.titlebar h2{font-size:1.15rem}}
+    </style><ha-card><div class="wrap">
+      <div class="titlebar"><h2>${VeggaUi.escape(this._config.title)}</h2><span class="count">${sectors.length} sectores</span></div>
+      ${rows ? `<div class="list">${rows}</div>` : `<div class="empty">No se han encontrado los selectores de modo de los sectores.</div>`}
+    </div></ha-card>
+    <dialog><div class="dialog-body">
+      <div class="dialog-title"><ha-icon icon="mdi:shield-alert"></ha-icon>Confirmar orden de sector</div>
+      ${pending ? `<div class="change"><strong>${VeggaUi.escape(pending.name)}</strong><br>${VeggaUi.escape(pending.current)} → <strong>${VeggaUi.escape(pending.option)}</strong></div><div>La orden se enviará inmediatamente al programador Agrónic.</div>` : ""}
+      ${this._message ? `<div class="message ${this._message.startsWith("No se pudo") ? "error" : ""}">${VeggaUi.escape(this._message)}</div>` : ""}
+      <div class="dialog-actions"><button class="cancel" ${this._busy ? "disabled" : ""}>Cancelar</button><button class="confirm" ${this._busy ? "disabled" : ""}>${this._busy ? "Enviando…" : "Confirmar"}</button></div>
+    </div></dialog>`;
+
+    this.shadowRoot.querySelectorAll("button.mode").forEach((button) => {
+      button.addEventListener("click", () => this._ask(button.dataset.entity, button.dataset.option, button.dataset.name, button.dataset.current));
+    });
+    this.shadowRoot.querySelectorAll("button[data-info]").forEach((button) => {
+      button.addEventListener("click", () => VeggaUi.moreInfo(this, button.dataset.info));
+    });
+    this.shadowRoot.querySelector(".cancel")?.addEventListener("click", () => this._close());
+    this.shadowRoot.querySelector(".confirm")?.addEventListener("click", () => this._apply());
+    this.shadowRoot.querySelector("dialog")?.addEventListener("cancel", (event) => {
+      if (this._busy) event.preventDefault();
+      else this._close();
+    });
+  }
+}
+
+class VeggaProgramControlsCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = null;
+    this._hass = null;
+    this._pending = null;
+    this._busy = false;
+    this._message = "";
+  }
+
+  static getStubConfig() {
+    return { controller: "vivero_agronic_17669", title: "Control de programas" };
+  }
+
+  setConfig(config) {
+    if (!config?.controller) throw new Error("Debes indicar controller.");
+    this._config = { title: "Control de programas", show_stop: true, confirm: true, ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  getCardSize() { return 8; }
+  getGridOptions() { return { rows: 8, columns: 12, min_rows: 4, min_columns: 6 }; }
+
+  _extractProgram(state) {
+    const friendly = String(state?.attributes?.friendly_name || "");
+    const lower = friendly.toLocaleLowerCase("es-ES");
+    const starts = ["iniciar programa ", "arrancar programa "];
+    const stops = ["parar programa ", "detener programa "];
+    for (const marker of starts) {
+      const index = lower.lastIndexOf(marker);
+      if (index >= 0) return { action: "start", name: friendly.slice(index + marker.length).trim() };
+    }
+    for (const marker of stops) {
+      const index = lower.lastIndexOf(marker);
+      if (index >= 0) return { action: "stop", name: friendly.slice(index + marker.length).trim() };
+    }
+
+    const stem = state.entity_id.split(".")[1] || "";
+    let match = stem.match(/(?:^|_)iniciar_programa_(.+)$/);
+    if (match) return { action: "start", name: match[1].replaceAll("_", " ") };
+    match = stem.match(/(?:^|_)parar_programa_(.+)$/);
+    if (match) return { action: "stop", name: match[1].replaceAll("_", " ") };
+    return null;
+  }
+
+  _programs() {
+    const grouped = new Map();
+    Object.values(this._hass?.states || {}).forEach((state) => {
+      if (!state.entity_id.startsWith("button.") || !VeggaUi.belongs(state, this._config)) return;
+      const parsed = this._extractProgram(state);
+      if (!parsed?.name) return;
+      const key = parsed.name.toLocaleLowerCase("es-ES").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      const current = grouped.get(key) || { name: parsed.name, start: null, stop: null };
+      current[parsed.action] = state;
+      grouped.set(key, current);
+    });
+    return Array.from(grouped.values()).sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base", numeric: true }));
+  }
+
+  _activeNames() {
+    const prefix = VeggaUi.prefix(this._config);
+    const state = this._hass?.states?.[`sensor.${prefix}_programas_activos`];
+    const values = Array.isArray(state?.attributes?.active_program_names) ? state.attributes.active_program_names : [];
+    return new Set(values.map((value) => String(value).toLocaleLowerCase("es-ES").trim()));
+  }
+
+  _ask(entityId, action, name) {
+    if (!entityId || this._busy) return;
+    this._pending = { entityId, action, name };
+    this._message = "";
+    this._render();
+    const dialog = this.shadowRoot.querySelector("dialog");
+    if (this._config.confirm === false) this._apply();
+    else if (dialog && !dialog.open) dialog.showModal();
+  }
+
+  _close() {
+    if (this._busy) return;
+    this.shadowRoot.querySelector("dialog")?.close();
+    this._pending = null;
+    this._message = "";
+    this._render();
+  }
+
+  async _apply() {
+    if (!this._hass || !this._pending || this._busy) return;
+    this._busy = true;
+    this._message = "Enviando orden al Agrónic…";
+    this._render();
+    this.shadowRoot.querySelector("dialog")?.showModal();
+    const pending = this._pending;
+    try {
+      await this._hass.callService("button", "press", { entity_id: pending.entityId });
+      this._busy = false;
+      this._pending = null;
+      this._message = "";
+      this._render();
+      VeggaUi.notify(this, `${pending.action === "start" ? "Iniciado" : "Detenido"}: ${pending.name}`);
+    } catch (error) {
+      this._busy = false;
+      this._message = `No se pudo enviar la orden: ${error?.message || error}`;
+      this._render();
+      this.shadowRoot.querySelector("dialog")?.showModal();
+    }
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._config || !this._hass) return;
+    const programs = this._programs();
+    const activeNames = this._activeNames();
+    const items = programs.map((program) => {
+      const active = activeNames.has(program.name.toLocaleLowerCase("es-ES").trim());
+      const infoEntity = program.start?.entity_id || program.stop?.entity_id;
+      return `<div class="program ${active ? "active" : ""}">
+        <div class="program-head">
+          <button class="program-name" data-info="${VeggaUi.escape(infoEntity)}">${VeggaUi.escape(program.name)}<ha-icon icon="mdi:information-outline"></ha-icon></button>
+          <span class="status">${active ? "En ejecución" : "Parado"}</span>
+        </div>
+        <div class="actions ${this._config.show_stop === false ? "single" : ""}">
+          <button class="action start" data-entity="${VeggaUi.escape(program.start?.entity_id || "")}" data-action="start" data-name="${VeggaUi.escape(program.name)}" ${!program.start || this._busy ? "disabled" : ""}><ha-icon icon="mdi:play"></ha-icon>Iniciar</button>
+          ${this._config.show_stop !== false ? `<button class="action stop" data-entity="${VeggaUi.escape(program.stop?.entity_id || "")}" data-action="stop" data-name="${VeggaUi.escape(program.name)}" ${!program.stop || this._busy ? "disabled" : ""}><ha-icon icon="mdi:stop"></ha-icon>Parar</button>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+
+    const pending = this._pending;
+    this.shadowRoot.innerHTML = `<style>
+      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.titlebar h2{margin:0;font-size:1.35rem}.count{color:var(--secondary-text-color);font-size:.82rem}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.program{padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.program.active{border-color:var(--success-color,#2e7d32);box-shadow:inset 4px 0 0 var(--success-color,#2e7d32)}.program-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:12px}.program-name{min-width:0;border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:700;text-align:left;padding:0;cursor:pointer;display:flex;align-items:center;gap:4px}.program-name:hover{color:var(--primary-color)}.program-name ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color)}.status{flex:0 0 auto;font-size:.74rem;padding:4px 8px;border-radius:999px;background:var(--secondary-background-color);color:var(--secondary-text-color)}.active .status{background:color-mix(in srgb,var(--success-color,#2e7d32) 16%,var(--card-background-color));color:var(--success-color,#2e7d32);font-weight:700}.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.actions.single{grid-template-columns:1fr}.action{min-height:46px;border:1px solid var(--divider-color);border-radius:11px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}.action:hover:not(:disabled){transform:translateY(-1px)}.action:disabled{opacity:.45;cursor:default}.action.start{border-color:color-mix(in srgb,var(--success-color,#2e7d32) 42%,var(--divider-color))}.action.start ha-icon{color:var(--success-color,#2e7d32)}.action.stop{border-color:color-mix(in srgb,var(--error-color,#d32f2f) 38%,var(--divider-color))}.action.stop ha-icon{color:var(--error-color,#d32f2f)}.empty{padding:22px;text-align:center;color:var(--secondary-text-color);border:1px solid var(--divider-color);border-radius:14px}dialog{width:min(460px,calc(100vw - 28px));border:0;border-radius:18px;padding:0;color:var(--primary-text-color);background:var(--card-background-color);box-shadow:0 14px 44px rgba(0,0,0,.4)}dialog::backdrop{background:rgba(0,0,0,.58)}.dialog-body{padding:24px}.dialog-title{font-size:1.18rem;font-weight:750;display:flex;align-items:center;gap:9px}.dialog-title ha-icon{color:var(--warning-color,#f9a825)}.change{margin:17px 0;padding:14px;border-radius:12px;background:var(--secondary-background-color)}.message{font-size:.9rem;color:var(--primary-color);margin-top:12px}.message.error{color:var(--error-color)}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}.dialog-actions button{min-height:42px;border-radius:10px;padding:0 16px;font:inherit;font-weight:700;cursor:pointer}.cancel{border:1px solid var(--divider-color);background:transparent;color:var(--primary-text-color)}.confirm{border:0;background:var(--primary-color);color:var(--text-primary-color,#fff)}
+      @media(max-width:1050px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:600px){.wrap{padding:12px}.grid{grid-template-columns:1fr}.titlebar h2{font-size:1.15rem}.action{min-height:50px}}
+    </style><ha-card><div class="wrap">
+      <div class="titlebar"><h2>${VeggaUi.escape(this._config.title)}</h2><span class="count">${programs.length} programas</span></div>
+      ${items ? `<div class="grid">${items}</div>` : `<div class="empty">No se han encontrado los botones de control de programas.</div>`}
+    </div></ha-card>
+    <dialog><div class="dialog-body">
+      <div class="dialog-title"><ha-icon icon="mdi:shield-alert"></ha-icon>Confirmar orden de programa</div>
+      ${pending ? `<div class="change"><strong>${pending.action === "start" ? "Iniciar" : "Parar"}</strong> el programa <strong>${VeggaUi.escape(pending.name)}</strong>.</div><div>La orden se enviará inmediatamente al programador Agrónic.</div>` : ""}
+      ${this._message ? `<div class="message ${this._message.startsWith("No se pudo") ? "error" : ""}">${VeggaUi.escape(this._message)}</div>` : ""}
+      <div class="dialog-actions"><button class="cancel" ${this._busy ? "disabled" : ""}>Cancelar</button><button class="confirm" ${this._busy ? "disabled" : ""}>${this._busy ? "Enviando…" : "Confirmar"}</button></div>
+    </div></dialog>`;
+
+    this.shadowRoot.querySelectorAll("button.action").forEach((button) => {
+      button.addEventListener("click", () => this._ask(button.dataset.entity, button.dataset.action, button.dataset.name));
+    });
+    this.shadowRoot.querySelectorAll("button[data-info]").forEach((button) => {
+      button.addEventListener("click", () => VeggaUi.moreInfo(this, button.dataset.info));
+    });
+    this.shadowRoot.querySelector(".cancel")?.addEventListener("click", () => this._close());
+    this.shadowRoot.querySelector(".confirm")?.addEventListener("click", () => this._apply());
+    this.shadowRoot.querySelector("dialog")?.addEventListener("cancel", (event) => {
+      if (this._busy) event.preventDefault();
+      else this._close();
+    });
   }
 }
 
 if (!customElements.get("vegga-overview-card")) customElements.define("vegga-overview-card", VeggaOverviewCard);
+if (!customElements.get("vegga-sector-controls-card")) customElements.define("vegga-sector-controls-card", VeggaSectorControlsCard);
+if (!customElements.get("vegga-program-controls-card")) customElements.define("vegga-program-controls-card", VeggaProgramControlsCard);
+
 window.customCards = window.customCards || [];
-if (!window.customCards.some(c => c.type === "vegga-overview-card")) {
-  window.customCards.push({ type: "vegga-overview-card", name: "VEGGA - Vista general", description: "Vista completa con sectores, programas y orden real de riego." });
-}
-console.info(`%c VEGGA overview card ${VEGGA_OVERVIEW_VERSION} `, "color:white;background:#00897b;font-weight:bold;padding:3px 6px;border-radius:4px");
+[
+  { type: "vegga-overview-card", name: "VEGGA - Resumen", description: "Riegos reales, consumos, inicio y fin por sector." },
+  { type: "vegga-sector-controls-card", name: "VEGGA - Control de sectores", description: "Todos los sectores con Automático, Marcha y Paro." },
+  { type: "vegga-program-controls-card", name: "VEGGA - Control de programas", description: "Inicio y parada de todos los programas Agrónic." },
+].forEach((card) => {
+  if (!window.customCards.some((existing) => existing.type === card.type)) window.customCards.push(card);
+});
+
+console.info(`%c VEGGA panel ${VEGGA_UI_VERSION} `, "color:white;background:#00897b;font-weight:bold;padding:3px 6px;border-radius:4px");
