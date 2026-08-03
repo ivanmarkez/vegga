@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.27
+# VEGGA Agrónic para Home Assistant — v0.4.30
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -18,7 +18,7 @@ Tras instalar o actualizar la integración y reiniciar Home Assistant:
 
 1. Abre **Ajustes → Paneles → Recursos**.
 2. Añade el recurso:
-   - URL: `/vegga_static/vegga-sector-card.js?v=0.4.25`
+   - URL: `/vegga_static/vegga-sector-card.js`
    - Tipo: `Módulo JavaScript`
 3. Recarga completamente el navegador o la aplicación.
 4. Añade una tarjeta y busca **VEGGA - Control seguro de sector**.
@@ -67,3 +67,10 @@ order: oldest_first
 - Añade a cada dispositivo de sector el sensor **Programas relacionados**.
 - Muestra todos los programas que contienen el sector y su posición dentro de cada programa.
 - La relación se obtiene automáticamente de la configuración descargada de VEGGA/Agrónic.
+
+
+## 0.4.30
+- El nombre de cada tarjeta de sector abre directamente la ficha del dispositivo de Home Assistant.
+- La navegación usa el `device_id` real del registro de entidades.
+- Si no puede resolverse el dispositivo, abre la ventana de más información de la entidad.
+- El recurso frontend se sirve sin caché persistente, por lo que ya no hace falta cambiar manualmente `?v=` en cada actualización.

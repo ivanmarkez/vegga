@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.4.28";
+const CARD_VERSION = "0.4.30";
 const MODES = [
   { value: "Automático", icon: "mdi:autorenew", className: "automatico" },
   { value: "Marcha manual", icon: "mdi:play", className: "marcha" },
@@ -62,7 +62,10 @@ class VeggaSectorCard extends HTMLElement {
     ).replace(/ Modo de funcionamiento$/i, "");
   }
 
-  async _openSectorDevice() {
+
+  async _openDevicePage(event) {
+    event?.preventDefault();
+    event?.stopPropagation();
     if (!this._hass || !this._config?.entity) return;
 
     try {
@@ -71,19 +74,23 @@ class VeggaSectorCard extends HTMLElement {
         entity_id: this._config.entity,
       });
       const deviceId = registryEntry?.device_id;
-      if (!deviceId) throw new Error("La entidad no tiene un dispositivo asociado");
-
-      const path = `/config/devices/device/${deviceId}`;
-      history.pushState(null, "", path);
-      window.dispatchEvent(new Event("location-changed"));
+      if (deviceId) {
+        const path = `/config/devices/device/${deviceId}`;
+        history.pushState(null, "", path);
+        window.dispatchEvent(new Event("location-changed"));
+        return;
+      }
     } catch (error) {
-      console.error("VEGGA: no se pudo abrir la ficha del sector", error);
-      this.dispatchEvent(new CustomEvent("hass-more-info", {
+      console.warn("VEGGA: no se pudo resolver el dispositivo del sector", error);
+    }
+
+    this.dispatchEvent(
+      new CustomEvent("hass-more-info", {
         bubbles: true,
         composed: true,
         detail: { entityId: this._config.entity },
-      }));
-    }
+      })
+    );
   }
 
   _openConfirmation(mode) {
@@ -150,8 +157,11 @@ class VeggaSectorCard extends HTMLElement {
         ha-card { padding: 18px; overflow: hidden; }
         .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
         .title { min-width: 0; }
-        .name { font-size: 1.1rem; font-weight: 600; color: var(--primary-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color .12s ease; }
-        .name:hover { text-decoration-color: currentColor; }
+        .sector-link { appearance: none; border: 0; padding: 0; margin: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; max-width: 100%; text-align: left; display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; }
+        .sector-link:hover .name, .sector-link:focus-visible .name { color: var(--primary-color); text-decoration: underline; }
+        .sector-link:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 3px; }
+        .sector-link ha-icon { --mdc-icon-size: 17px; color: var(--secondary-text-color); flex: 0 0 auto; }
+        .name { font-size: 1.1rem; font-weight: 600; color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .subtitle { margin-top: 4px; color: var(--secondary-text-color); font-size: .9rem; }
         .status { padding: 5px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; background: var(--secondary-background-color); white-space: nowrap; }
         .status.unavailable { color: var(--error-color); }
@@ -191,7 +201,10 @@ class VeggaSectorCard extends HTMLElement {
       <ha-card>
         <div class="header">
           <div class="title">
-            <div class="name" role="link" tabindex="0" title="Abrir ficha del sector">${this._escape(name)}</div>
+            <button class="sector-link" type="button" title="Abrir ficha del sector" aria-label="Abrir ficha de ${this._escape(name)}">
+              <span class="name">${this._escape(name)}</span>
+              <ha-icon icon="mdi:open-in-new"></ha-icon>
+            </button>
             <div class="subtitle">Modo actual: ${this._escape(currentMode)}</div>
           </div>
           <div class="status ${available ? "" : "unavailable"}">${available ? "Conectado" : "No disponible"}</div>
@@ -222,15 +235,7 @@ class VeggaSectorCard extends HTMLElement {
       </dialog>
     `;
 
-    const nameLink = this.shadowRoot.querySelector(".name");
-    nameLink?.addEventListener("click", () => this._openSectorDevice());
-    nameLink?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        this._openSectorDevice();
-      }
-    });
-
+    this.shadowRoot.querySelector(".sector-link")?.addEventListener("click", (event) => this._openDevicePage(event));
     this.shadowRoot.querySelectorAll("button.mode").forEach((button) => {
       button.addEventListener("click", () => this._openConfirmation(button.dataset.mode));
     });

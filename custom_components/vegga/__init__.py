@@ -22,7 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not domain_data.get("_frontend_registered"):
         frontend_file = Path(__file__).parent / "frontend" / "vegga-sector-card.js"
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(FRONTEND_URL, str(frontend_file), True)]
+            [StaticPathConfig(FRONTEND_URL, str(frontend_file), False)]
         )
         domain_data["_frontend_registered"] = True
 
