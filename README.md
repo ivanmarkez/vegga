@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.5.12
+# VEGGA Agrónic para Home Assistant — v0.5.13
 
 - Corrige las horas reales usando los cambios de estado registrados por Home Assistant.
 - El inicio es el primer cambio real a `on` del sector durante el día.
@@ -7,7 +7,11 @@
 - Mantiene el mismo recurso frontend y el mismo YAML.
 
 
-## Cambios 0.5.12
+## Cambios 0.5.13
+
+- Se eliminan los programas relacionados de las fichas móviles del resumen.
+- Los valores numéricos del resumen móvil aumentan aproximadamente un 20 %.
+- La tabla de escritorio y las tarjetas de control no cambian.
 
 - Vista móvil compacta con 4 columnas por fila.
 - Ocho datos visibles: inicio, fin, duración, consumo de hoy, ayer, diferencia, orden y estado.
