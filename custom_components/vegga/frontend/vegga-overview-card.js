@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.9";
+const VEGGA_UI_VERSION = "0.5.10";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -536,7 +536,6 @@ class VeggaSectorControlsCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._render();
-    this._scheduleActualHistory();
   }
 
   getCardSize() { return 12; }
@@ -688,7 +687,6 @@ class VeggaProgramControlsCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._render();
-    this._scheduleActualHistory();
   }
 
   getCardSize() { return 8; }

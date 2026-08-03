@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.5.9
+# VEGGA Agrónic para Home Assistant — v0.5.10
 
 - Corrige las horas reales usando los cambios de estado registrados por Home Assistant.
 - El inicio es el primer cambio real a `on` del sector durante el día.
