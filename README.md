@@ -1,4 +1,4 @@
-# VEGGA Agrónic para Home Assistant — v0.4.26
+# VEGGA Agrónic para Home Assistant — v0.4.27
 
 Integración no oficial de VEGGA/Agrónic para Home Assistant.
 
@@ -61,3 +61,9 @@ type: custom:vegga-last-irrigations-card
 title: Últimos riegos
 order: oldest_first
 ```
+
+
+## 0.4.27
+- Añade a cada dispositivo de sector el sensor **Programas relacionados**.
+- Muestra todos los programas que contienen el sector y su posición dentro de cada programa.
+- La relación se obtiene automáticamente de la configuración descargada de VEGGA/Agrónic.

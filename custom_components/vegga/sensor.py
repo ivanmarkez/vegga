@@ -55,6 +55,127 @@ def _sector_name(sector: dict[str, Any], fallback: int) -> str:
     return f"Sector {fallback}"
 
 
+
+
+def _normalise_text(value: Any) -> str:
+    return " ".join(str(value or "").casefold().replace("_", " ").replace("-", " ").split())
+
+
+def _program_number(program: dict[str, Any], fallback: int) -> int:
+    for key in ("programNumber", "program_number", "number", "program", "idProgram", "programId"):
+        try:
+            value = int(program.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            # The public list is normally one-based; zero is accepted for firmware variants.
+            return value if value > 0 else fallback
+    return fallback
+
+
+def _sector_aliases(sector: dict[str, Any], number: int, name: str) -> tuple[set[int], set[str]]:
+    numbers = {number, number - 1}
+    for key in ("id", "sectorId", "sector_id", "number", "sectorNumber", "sector_number", "_agronic_number"):
+        try:
+            numbers.add(int(sector.get(key)))
+        except (TypeError, ValueError):
+            pass
+    names = {_normalise_text(name), _normalise_text(f"Sector {number}")}
+    for key in ("name", "description", "nombre", "sectorName", "sector_name", "label"):
+        if sector.get(key) not in (None, ""):
+            names.add(_normalise_text(sector.get(key)))
+    return numbers, {item for item in names if item}
+
+
+def _program_sector_entries(program: dict[str, Any]) -> list[dict[str, Any]]:
+    """Locate sector references and preserve their order inside one program.
+
+    VEGGA has used several payload shapes between firmware versions.  We only
+    walk branches whose key explicitly mentions sectors/stations/valves, which
+    avoids confusing unrelated numeric ids with a sector number.
+    """
+    entries: list[dict[str, Any]] = []
+    branch_words = ("sector", "station", "valve", "salida", "unidadriego")
+
+    def add(value: Any, order: int, path: str) -> None:
+        if isinstance(value, (int, float, str)):
+            entries.append({"reference": value, "order": order, "path": path})
+            return
+        if not isinstance(value, dict):
+            return
+        ref = None
+        name = None
+        for key in ("sector", "sectorNumber", "sector_number", "sectorId", "sector_id", "number", "id"):
+            if value.get(key) not in (None, ""):
+                ref = value.get(key)
+                break
+        for key in ("sectorName", "sector_name", "name", "nombre", "description", "label"):
+            if value.get(key) not in (None, ""):
+                name = value.get(key)
+                break
+        explicit_order = order
+        for key in ("order", "orden", "position", "positionNumber", "sequence", "sequenceNumber", "priority"):
+            try:
+                explicit_order = int(value.get(key))
+                break
+            except (TypeError, ValueError):
+                pass
+        if ref is not None or name is not None:
+            entries.append({"reference": ref, "name": name, "order": explicit_order, "path": path})
+
+    def walk(value: Any, path: str = "program") -> None:
+        if not isinstance(value, dict):
+            return
+        for key, child in value.items():
+            key_norm = _normalise_text(key).replace(" ", "")
+            if not any(word in key_norm for word in branch_words):
+                continue
+            if isinstance(child, list):
+                for index, item in enumerate(child, start=1):
+                    add(item, index, f"{path}.{key}[{index - 1}]")
+            elif isinstance(child, dict):
+                # Maps may be keyed by the sector number.
+                for index, (map_key, item) in enumerate(child.items(), start=1):
+                    if isinstance(item, dict):
+                        candidate = dict(item)
+                        candidate.setdefault("sector", map_key)
+                        add(candidate, index, f"{path}.{key}.{map_key}")
+                    else:
+                        add(map_key if bool(item) else item, index, f"{path}.{key}.{map_key}")
+            else:
+                add(child, 1, f"{path}.{key}")
+    walk(program)
+    return entries
+
+
+def _sector_program_links(data: dict[str, Any], sector_number: int, sector_name: str) -> list[dict[str, Any]]:
+    sectors = data.get("sectors", [])
+    sector = sectors[sector_number - 1] if 1 <= sector_number <= len(sectors) else {}
+    number_aliases, name_aliases = _sector_aliases(sector if isinstance(sector, dict) else {}, sector_number, sector_name)
+    links: list[dict[str, Any]] = []
+    for fallback, program in enumerate(data.get("programs", []), start=1):
+        if not isinstance(program, dict):
+            continue
+        for entry in _program_sector_entries(program):
+            ref_match = False
+            try:
+                ref_match = int(entry.get("reference")) in number_aliases
+            except (TypeError, ValueError):
+                pass
+            name_match = _normalise_text(entry.get("name")) in name_aliases if entry.get("name") else False
+            if ref_match or name_match:
+                number = _program_number(program, fallback)
+                name = _program_name(program, fallback)
+                links.append({
+                    "program_number": number,
+                    "program_name": name,
+                    "order": entry.get("order"),
+                    "label": f"P{number} {name}",
+                    "source_path": entry.get("path"),
+                })
+                break
+    return links
+
 def _runtime_program_number(sector: dict[str, Any]) -> int:
     for key in ("xProgramN", "xprogramn", "program", "programNumber", "programId"):
         value = sector.get(key)
@@ -170,6 +291,7 @@ async def async_setup_entry(
             VeggaSectorExpectedFlowSensor(coordinator, number, name),
             VeggaSectorActualFlowSensor(coordinator, number, name),
             VeggaSectorFlowDeviationSensor(coordinator, number, name),
+            VeggaSectorProgramsSensor(coordinator, number, name),
         ])
     async_add_entities(entities)
 
@@ -328,6 +450,46 @@ class VeggaLiveStatusDiagnosticSensor(VeggaEntity, SensorEntity):
             "active_program_candidates": _find_active_refs(payload, "program"),
             "active_sector_candidates": _find_active_refs(payload, "sector"),
             "response_sample": _sample_payload(payload),
+        }
+
+
+class VeggaSectorProgramsSensor(VeggaSectorEntity, SensorEntity):
+    """Programs in which this sector is configured, including its sequence."""
+
+    _attr_icon = "mdi:format-list-numbered"
+
+    def __init__(self, coordinator, number: int, name: str) -> None:
+        super().__init__(coordinator, number, name)
+        self._number = number
+        self._name = name
+        self._attr_name = "Programas relacionados"
+        self._attr_unique_id = f"{coordinator.api.device_id}_sector_{number}_related_programs"
+
+    def _links(self) -> list[dict[str, Any]]:
+        return _sector_program_links(self.coordinator.data or {}, self._number, self._name)
+
+    @property
+    def native_value(self) -> str:
+        links = self._links()
+        if not links:
+            return "Sin programa relacionado"
+        parts = []
+        for item in links:
+            order = item.get("order")
+            suffix = f" ({order}.º)" if isinstance(order, int) and order > 0 else ""
+            parts.append(f"{item['label']}{suffix}")
+        return " · ".join(parts)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        links = self._links()
+        return {
+            "sector_number": self._number,
+            "sector_name": self._name,
+            "program_count": len(links),
+            "programs": links,
+            "program_names": [item["program_name"] for item in links],
+            "program_numbers": [item["program_number"] for item in links],
         }
 
 
