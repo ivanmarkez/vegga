@@ -484,6 +484,7 @@ class VeggaSectorProgramsSensor(VeggaSectorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         links = self._links()
         return {
+            "vegga_device_id": str(self.coordinator.api.device_id),
             "sector_number": self._number,
             "sector_name": self._name,
             "program_count": len(links),
@@ -526,6 +527,7 @@ class VeggaSectorConsumptionSensor(VeggaSectorEntity, SensorEntity):
             records, self._number, yesterday, dt_util.DEFAULT_TIME_ZONE
         )
         return {
+            "vegga_device_id": str(self.coordinator.api.device_id),
             "sector_number": analysis.sector_number,
             "sector_name": analysis.sector_name,
             "program_number": analysis.program_number,
@@ -662,6 +664,9 @@ class VeggaSectorLastIrrigationSensor(_VeggaSectorAnalysisSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         analysis = self._analysis()
         return {
+            "vegga_device_id": str(self.coordinator.api.device_id),
+            "sector_number": analysis.sector_number,
+            "sector_name": analysis.sector_name,
             "started_at": analysis.last_started_at,
             "ended_at": analysis.last_ended_at,
             "duration_minutes": analysis.last_duration_minutes,

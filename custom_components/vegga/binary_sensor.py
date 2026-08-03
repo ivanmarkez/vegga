@@ -148,7 +148,11 @@ class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         sector = self._sector()
-        return {"sector_number": self._number, "vegga_data": sector or {}}
+        return {
+            "vegga_device_id": str(self.coordinator.api.device_id),
+            "sector_number": self._number,
+            "vegga_data": sector or {},
+        }
 
 
 class VeggaSectorConsumptionAnomalyBinarySensor(VeggaSectorEntity, BinarySensorEntity):

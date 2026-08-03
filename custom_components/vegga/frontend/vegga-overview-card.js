@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.6";
+const VEGGA_UI_VERSION = "0.5.7";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -116,9 +116,14 @@ class VeggaOverviewCard extends HTMLElement {
   }
 
   _findSectorState(number, predicate) {
-    return this._allStates().find((state) =>
-      this._belongsToController(state) && this._sectorNumber(state) === number && predicate(state)
-    ) || null;
+    const matches = this._allStates().filter((state) =>
+      this._sectorNumber(state) === number && predicate(state)
+    );
+    const owned = matches.find((state) => this._belongsToController(state));
+    if (owned) return owned;
+    // Older entity ids created by Home Assistant may not contain the controller
+    // prefix. When there is only one unambiguous sector entity, use it.
+    return matches.length === 1 ? matches[0] : null;
   }
 
   _sectors() {
@@ -188,18 +193,28 @@ class VeggaOverviewCard extends HTMLElement {
     let started = this._date(attrs.started_at || consumptionAttrs.last_started_at);
     let ended = this._date(attrs.ended_at || consumptionAttrs.last_ended_at);
     const active = sector.status?.state === "on";
+    const durationValue = sector.duration?.state ?? attrs.duration_minutes ?? consumptionAttrs.last_duration_minutes;
+    const durationMinutes = this._number(durationValue);
 
     if (active) {
       const stateStarted = this._date(sector.status?.last_changed);
       if (stateStarted && (!started || stateStarted > started)) started = stateStarted;
       ended = null;
-    }
-
-    if (!active && started && !ended) {
-      const durationValue = sector.duration?.state ?? attrs.duration_minutes ?? consumptionAttrs.last_duration_minutes;
-      const durationMinutes = this._number(durationValue);
-      if (durationMinutes !== null && durationMinutes >= 0) {
-        ended = new Date(started.getTime() + durationMinutes * 60000);
+    } else if (durationMinutes !== null && durationMinutes >= 0) {
+      const durationMs = durationMinutes * 60000;
+      if (started && ended) {
+        const recordedMs = ended.getTime() - started.getTime();
+        const toleranceMs = Math.max(120000, durationMs * 0.25);
+        // Some VEGGA history rows expose the program start as dateFrom and the
+        // real sector finish as dateTo. If the span disagrees with the actual
+        // duration, preserve the real finish and reconstruct the sector start.
+        if (recordedMs < 0 || Math.abs(recordedMs - durationMs) > toleranceMs) {
+          started = new Date(ended.getTime() - durationMs);
+        }
+      } else if (ended && !started) {
+        started = new Date(ended.getTime() - durationMs);
+      } else if (started && !ended) {
+        ended = new Date(started.getTime() + durationMs);
       }
     }
 
@@ -286,12 +301,19 @@ class VeggaOverviewCard extends HTMLElement {
         ?? sector.consumption?.attributes?.last_duration_minutes;
       const durationNumber = this._number(durationValue);
       const duration = durationNumber === null ? "—" : `${this._format(durationNumber, 0)} min`;
-      const programs = this._validState(sector.programs) ? sector.programs.state : "—";
+      let programs = this._validState(sector.programs) ? sector.programs.state : "—";
+      if (programs === "—") {
+        const programName = sector.consumption?.attributes?.program_name;
+        const programNumber = sector.consumption?.attributes?.program_number;
+        if (programName) programs = String(programName);
+        else if (programNumber !== undefined && programNumber !== null) programs = `Programa ${programNumber}`;
+      }
+      const hasPrograms = !["—", "Sin programa relacionado"].includes(String(programs));
       const order = todayOrder.get(sector.number) || null;
       const startedTitle = actual.started ? actual.started.toLocaleString("es-ES") : "Sin inicio real registrado";
       const endedTitle = actual.active ? "El sector continúa regando" : actual.ended ? actual.ended.toLocaleString("es-ES") : "Sin fin real registrado";
       return {
-        sector, today, yesterday, delta, actual, duration, programs, order,
+        sector, today, yesterday, delta, actual, duration, programs, hasPrograms, order,
         startedTitle, endedTitle,
       };
     });
@@ -323,7 +345,7 @@ class VeggaOverviewCard extends HTMLElement {
         <div class="metric"><span>Ayer</span><strong>${this._format(item.yesterday)} m³</strong></div>
         <div class="metric"><span>Diferencia</span><strong><span class="delta ${item.delta.cls}">${item.delta.text}</span></strong></div>
       </div>
-      ${this._config.show_programs ? `<div class="mobile-programs"><span>Programas</span><strong>${this._escape(item.programs)}</strong></div>` : ""}
+      ${this._config.show_programs && item.hasPrograms ? `<div class="mobile-programs"><span>Programas</span><strong>${this._escape(item.programs)}</strong></div>` : ""}
     </article>`).join("");
 
     this.shadowRoot.innerHTML = `<style>

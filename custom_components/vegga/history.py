@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import Any
 
@@ -193,6 +193,36 @@ def end_time(record: dict[str, Any]) -> datetime | None:
     return _datetime(_first(record, ("dateTo", "date_to", "to", "end", "endDate", "end_date", "endedAt", "ended_at")))
 
 
+
+
+def irrigation_window(record: dict[str, Any]) -> tuple[datetime | None, datetime | None, float | None]:
+    """Return a coherent real sector start, finish and duration.
+
+    Some VEGGA A-5500 history rows use ``dateFrom`` for the start of the whole
+    program while ``dateTo`` is the actual sector finish.  The effective
+    irrigation duration is sector-specific, so when the recorded span and
+    duration disagree we preserve the real finish and reconstruct the sector
+    start from ``finish - duration``.
+    """
+    started = start_time(record)
+    ended = end_time(record)
+    duration = duration_minutes(record)
+    if duration is None or duration < 0:
+        return started, ended, duration
+
+    delta = timedelta(minutes=duration)
+    if started is not None and ended is not None:
+        recorded_seconds = (ended - started).total_seconds()
+        expected_seconds = delta.total_seconds()
+        tolerance = max(120.0, expected_seconds * 0.25)
+        if recorded_seconds < 0 or abs(recorded_seconds - expected_seconds) > tolerance:
+            started = ended - delta
+    elif ended is not None:
+        started = ended - delta
+    elif started is not None:
+        ended = started + delta
+    return started, ended, duration
+
 def flow_values(record: dict[str, Any]) -> tuple[float | None, float | None, float | None]:
     flow = _first(record, ("flow", "caudal"))
     if not isinstance(flow, dict):
@@ -276,7 +306,7 @@ def analyse_sector(
     elif abs(deviation) >= ANOMALY_WARNING_PERCENT:
         level = "warning"
 
-    duration = duration_minutes(last_record)
+    started, ended, duration = irrigation_window(last_record)
     calculated_flow = last_volume / (duration / 60.0) if duration and duration > 0 else None
     expected_flow, actual_flow, vegga_deviation = flow_values(last_record)
     return SectorAnalysis(
@@ -295,8 +325,8 @@ def analyse_sector(
         expected_flow,
         actual_flow,
         vegga_deviation,
-        start_time(last_record),
-        end_time(last_record),
+        started,
+        ended,
         level,
     )
 
