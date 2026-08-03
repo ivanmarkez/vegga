@@ -21,7 +21,7 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
 ]
 
-VERSION = "0.5.7"
+VERSION = "0.5.8"
 FRONTEND_BASE = "/vegga_static"
 FRONTEND_FILES = (
     "vegga-sector-card.js",

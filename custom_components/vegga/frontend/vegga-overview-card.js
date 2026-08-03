@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.7";
+const VEGGA_UI_VERSION = "0.5.8";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -200,23 +200,11 @@ class VeggaOverviewCard extends HTMLElement {
       const stateStarted = this._date(sector.status?.last_changed);
       if (stateStarted && (!started || stateStarted > started)) started = stateStarted;
       ended = null;
-    } else if (durationMinutes !== null && durationMinutes >= 0) {
-      const durationMs = durationMinutes * 60000;
-      if (started && ended) {
-        const recordedMs = ended.getTime() - started.getTime();
-        const toleranceMs = Math.max(120000, durationMs * 0.25);
-        // Some VEGGA history rows expose the program start as dateFrom and the
-        // real sector finish as dateTo. If the span disagrees with the actual
-        // duration, preserve the real finish and reconstruct the sector start.
-        if (recordedMs < 0 || Math.abs(recordedMs - durationMs) > toleranceMs) {
-          started = new Date(ended.getTime() - durationMs);
-        }
-      } else if (ended && !started) {
-        started = new Date(ended.getTime() - durationMs);
-      } else if (started && !ended) {
-        ended = new Date(started.getTime() + durationMs);
-      }
     }
+
+    // VEGGA history grouped by day can contain several activations of one
+    // sector. Keep the first start and last finish supplied by VEGGA; the
+    // duration is accumulated watering time and is not the elapsed span.
 
     return { started, ended, active };
   }

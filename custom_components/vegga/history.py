@@ -6,6 +6,8 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from .const import (
     ANOMALY_ALARM_PERCENT,
     ANOMALY_WARNING_PERCENT,
@@ -73,15 +75,22 @@ def _number(value: Any) -> float | None:
 
 
 def _datetime(value: Any) -> datetime | None:
+    """Parse a VEGGA timestamp without inventing a UTC offset.
+
+    The A-5500 history endpoint returns local controller times without a zone
+    suffix.  Treating those values as UTC shifts them by two hours in Spain
+    during summer.  Naive values therefore belong to Home Assistant's
+    configured local timezone; explicit offsets are preserved unchanged.
+    """
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
     if not isinstance(value, str) or not value.strip():
         return None
     text = value.strip().replace("Z", "+00:00")
     for candidate in (text, text.replace(" ", "T")):
         try:
             parsed = datetime.fromisoformat(candidate)
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
         except ValueError:
             continue
     return None
@@ -196,32 +205,15 @@ def end_time(record: dict[str, Any]) -> datetime | None:
 
 
 def irrigation_window(record: dict[str, Any]) -> tuple[datetime | None, datetime | None, float | None]:
-    """Return a coherent real sector start, finish and duration.
+    """Return the real first start, last finish and accumulated duration.
 
-    Some VEGGA A-5500 history rows use ``dateFrom`` for the start of the whole
-    program while ``dateTo`` is the actual sector finish.  The effective
-    irrigation duration is sector-specific, so when the recorded span and
-    duration disagree we preserve the real finish and reconstruct the sector
-    start from ``finish - duration``.
+    With ``grouping=DAY`` VEGGA may aggregate several activations of the same
+    sector. ``dateFrom`` is the first real activation, ``dateTo`` is the last
+    finish and ``duration`` is the accumulated watering time.  The duration
+    therefore does not have to equal the full span between both timestamps.
+    Never reconstruct either timestamp from the accumulated duration.
     """
-    started = start_time(record)
-    ended = end_time(record)
-    duration = duration_minutes(record)
-    if duration is None or duration < 0:
-        return started, ended, duration
-
-    delta = timedelta(minutes=duration)
-    if started is not None and ended is not None:
-        recorded_seconds = (ended - started).total_seconds()
-        expected_seconds = delta.total_seconds()
-        tolerance = max(120.0, expected_seconds * 0.25)
-        if recorded_seconds < 0 or abs(recorded_seconds - expected_seconds) > tolerance:
-            started = ended - delta
-    elif ended is not None:
-        started = ended - delta
-    elif started is not None:
-        ended = started + delta
-    return started, ended, duration
+    return start_time(record), end_time(record), duration_minutes(record)
 
 def flow_values(record: dict[str, Any]) -> tuple[float | None, float | None, float | None]:
     flow = _first(record, ("flow", "caudal"))
