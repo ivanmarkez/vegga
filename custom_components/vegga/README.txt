@@ -1,6 +1,4 @@
-VEGGA Agrónic v0.4.23
+VEGGA Agrónic v0.5.16
 
-Incluye la tarjeta Lovelace vegga-sector-card con confirmación emergente.
-Recurso: /vegga_static/vegga-sector-card.js?v=0.4.23
-
-La tarjeta utiliza el selector de modo y el confirmación emergente de la tarjeta interno para mantener la seguridad en dos capas.
+Tarjetas Lovelace integradas para resumen de riego, control de sectores y control de programas.
+Recurso frontend estable: /vegga_static/vegga-overview-card.js
