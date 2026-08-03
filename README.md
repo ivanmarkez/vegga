@@ -1,3 +1,12 @@
+## 0.5.6 — Resumen unificado y móvil sin desplazamiento lateral
+
+- Une “Orden de riego de hoy” y “Sectores” en una sola sección: **Riegos por sector**.
+- Los sectores regados hoy aparecen primero y ordenados por su hora real de inicio.
+- Añade en una sola vista: orden, estado, inicio real, fin real, duración, consumo de hoy, ayer y diferencia.
+- En móvil presenta cada sector como una ficha vertical y elimina el desplazamiento horizontal.
+- Mantiene separadas las tarjetas de control de sectores y control de programas.
+- No requiere cambiar el recurso `/vegga_static/vegga-overview-card.js`.
+
 
 ## 0.5.5
 

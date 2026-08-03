@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.5";
+const VEGGA_UI_VERSION = "0.5.6";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -259,6 +259,16 @@ class VeggaOverviewCard extends HTMLElement {
     if (!this.shadowRoot || !this._config || !this._hass) return;
     const sectors = this._sectors();
     const irrigations = this._todayIrrigations(sectors);
+    const todayOrder = new Map(irrigations.map((sector, index) => [sector.number, index + 1]));
+    const orderedSectors = [...sectors].sort((a, b) => {
+      const aOrder = todayOrder.get(a.number);
+      const bOrder = todayOrder.get(b.number);
+      if (aOrder && bOrder) return aOrder - bOrder;
+      if (aOrder) return -1;
+      if (bOrder) return 1;
+      return a.name.localeCompare(b.name, "es", { sensitivity: "base", numeric: true });
+    });
+
     const prefix = this._prefix();
     const connection = this._state(`binary_sensor.${prefix}_conexion_vegga`);
     const activeSectors = this._state(`sensor.${prefix}_sectores_activos`);
@@ -266,44 +276,60 @@ class VeggaOverviewCard extends HTMLElement {
     const updated = this._state(`sensor.${prefix}_ultima_actualizacion_del_historico`);
     const connected = connection?.state === "on";
 
-    const sectorRows = sectors.map((sector) => {
+    const viewModel = orderedSectors.map((sector) => {
       const today = sector.consumption?.state;
       const yesterday = sector.consumption?.attributes?.yesterday_volume_m3;
       const delta = this._delta(today, yesterday);
       const actual = this._actualTimes(sector);
+      const durationValue = sector.duration?.state
+        ?? sector.last?.attributes?.duration_minutes
+        ?? sector.consumption?.attributes?.last_duration_minutes;
+      const durationNumber = this._number(durationValue);
+      const duration = durationNumber === null ? "—" : `${this._format(durationNumber, 0)} min`;
       const programs = this._validState(sector.programs) ? sector.programs.state : "—";
+      const order = todayOrder.get(sector.number) || null;
       const startedTitle = actual.started ? actual.started.toLocaleString("es-ES") : "Sin inicio real registrado";
       const endedTitle = actual.active ? "El sector continúa regando" : actual.ended ? actual.ended.toLocaleString("es-ES") : "Sin fin real registrado";
-      return `<tr>
-        <td><button class="sector-name" data-entity="${this._escape(sector.linkEntity)}">${this._escape(sector.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
-        <td class="center"><span class="dot ${actual.active ? "active" : ""}"></span></td>
-        <td class="time" title="${this._escape(startedTitle)}">${this._actualMoment(actual.started)}</td>
-        <td class="time ${actual.active ? "running" : ""}" title="${this._escape(endedTitle)}">${actual.active ? "En curso" : this._actualMoment(actual.ended)}</td>
-        <td class="num">${this._format(today)}</td>
-        <td class="num">${this._format(yesterday)}</td>
-        <td class="num"><span class="delta ${delta.cls}">${delta.text}</span></td>
-        ${this._config.show_programs ? `<td class="programs" title="${this._escape(programs)}">${this._escape(programs)}</td>` : ""}
-      </tr>`;
-    }).join("");
+      return {
+        sector, today, yesterday, delta, actual, duration, programs, order,
+        startedTitle, endedTitle,
+      };
+    });
 
-    const irrigationRows = irrigations.map((sector, index) => {
-      const durationValue = sector.duration?.state ?? sector.last?.attributes?.duration_minutes ?? sector.consumption?.attributes?.last_duration_minutes;
-      const duration = this._number(durationValue) === null ? "—" : `${this._format(durationValue, 0)} min`;
-      const volume = sector.last?.attributes?.volume_m3 ?? sector.consumption?.state;
-      return `<tr>
-        <td class="order">${index + 1}.º</td>
-        <td><button class="sector-name" data-entity="${this._escape(sector.linkEntity)}">${this._escape(sector.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
-        <td class="time">${this._clock(sector.actual.started)}</td>
-        <td class="time ${sector.actual.active ? "running" : ""}">${sector.actual.active ? "En curso" : this._clock(sector.actual.ended)}</td>
-        <td class="num">${duration}</td>
-        <td class="num">${this._format(volume)} m³</td>
-      </tr>`;
-    }).join("");
+    const desktopRows = viewModel.map((item) => `<tr class="${item.order ? "today-row" : ""}">
+      ${this._config.show_irrigation_order !== false ? `<td class="order">${item.order ? `${item.order}.º` : "—"}</td>` : ""}
+      <td><button class="sector-name" data-entity="${this._escape(item.sector.linkEntity)}">${this._escape(item.sector.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
+      <td class="center"><span class="dot ${item.actual.active ? "active" : ""}"></span></td>
+      <td class="time" title="${this._escape(item.startedTitle)}">${this._escape(this._actualMoment(item.actual.started))}</td>
+      <td class="time ${item.actual.active ? "running" : ""}" title="${this._escape(item.endedTitle)}">${item.actual.active ? "En curso" : this._escape(this._actualMoment(item.actual.ended))}</td>
+      <td class="num">${this._escape(item.duration)}</td>
+      <td class="num">${this._format(item.today)}</td>
+      <td class="num">${this._format(item.yesterday)}</td>
+      <td class="num"><span class="delta ${item.delta.cls}">${item.delta.text}</span></td>
+      ${this._config.show_programs ? `<td class="programs" title="${this._escape(item.programs)}">${this._escape(item.programs)}</td>` : ""}
+    </tr>`).join("");
+
+    const mobileCards = viewModel.map((item) => `<article class="sector-mobile ${item.order ? "today" : ""}">
+      <div class="mobile-head">
+        <button class="sector-name mobile-name" data-entity="${this._escape(item.sector.linkEntity)}">${this._escape(item.sector.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button>
+        <span class="state-pill ${item.actual.active ? "active" : ""}"><span class="dot ${item.actual.active ? "active" : ""}"></span>${item.actual.active ? "Regando" : "Parado"}</span>
+      </div>
+      ${item.order ? `<div class="today-badge"><ha-icon icon="mdi:clock-check-outline"></ha-icon>Riego de hoy · ${item.order}.º</div>` : ""}
+      <div class="mobile-grid">
+        <div class="metric"><span>Inicio real</span><strong>${this._escape(this._actualMoment(item.actual.started))}</strong></div>
+        <div class="metric"><span>Fin real</span><strong class="${item.actual.active ? "running" : ""}">${item.actual.active ? "En curso" : this._escape(this._actualMoment(item.actual.ended))}</strong></div>
+        <div class="metric"><span>Duración</span><strong>${this._escape(item.duration)}</strong></div>
+        <div class="metric"><span>Hoy</span><strong>${this._format(item.today)} m³</strong></div>
+        <div class="metric"><span>Ayer</span><strong>${this._format(item.yesterday)} m³</strong></div>
+        <div class="metric"><span>Diferencia</span><strong><span class="delta ${item.delta.cls}">${item.delta.text}</span></strong></div>
+      </div>
+      ${this._config.show_programs ? `<div class="mobile-programs"><span>Programas</span><strong>${this._escape(item.programs)}</strong></div>` : ""}
+    </article>`).join("");
 
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section h3{margin:0 0 10px;font-size:1.05rem}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:820px}th,td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}tr:last-child td{border-bottom:0}.num{text-align:right;white-space:nowrap}.center{text-align:center}.time{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}.running{color:var(--success-color,#2e7d32);font-weight:700}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb)}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color)}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.order{font-weight:800;text-align:center}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}
-      @media(max-width:899px){.wrap{padding:12px}.summaries{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{padding:11px}.programs{display:none}table{min-width:760px}.titlebar h2{font-size:1.15rem}}
-      @media(max-width:480px){.summaries{grid-template-columns:1fr 1fr;gap:7px}.summary ha-icon{--mdc-icon-size:23px}.summary-title{font-size:.82rem}.summary-value{font-size:.82rem}}
+      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:10px}.section-title h3{margin:0;font-size:1.05rem}.section-note{font-size:.78rem;color:var(--secondary-text-color);text-align:right}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}.desktop-table{width:100%;border-collapse:collapse;min-width:1050px}.desktop-table th,.desktop-table td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}.desktop-table th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}.desktop-table tr:last-child td{border-bottom:0}.desktop-table .today-row{background:color-mix(in srgb,var(--primary-color) 4%,transparent)}.num{text-align:right!important;white-space:nowrap}.center{text-align:center!important}.time{text-align:center!important;white-space:nowrap;font-variant-numeric:tabular-nums}.running{color:var(--success-color,#2e7d32)!important;font-weight:700}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb);flex:0 0 auto}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color);flex:0 0 auto}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.order{font-weight:800;text-align:center!important;white-space:nowrap}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}.mobile-list{display:none}
+      @media(max-width:899px){.wrap{padding:12px}.summaries{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.summary{padding:11px;min-width:0}.summary>div{min-width:0}.summary-value,.summary-sub{overflow:hidden;text-overflow:ellipsis}.section-title{align-items:flex-start;flex-direction:column;gap:3px}.section-note{text-align:left}.desktop-only{display:none}.mobile-list{display:grid;gap:10px}.sector-mobile{border:1px solid var(--divider-color);border-radius:14px;padding:13px;background:var(--card-background-color);min-width:0}.sector-mobile.today{border-left:4px solid var(--primary-color);padding-left:10px}.mobile-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.mobile-name{font-size:1rem;min-width:0;overflow-wrap:anywhere}.state-pill{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;border-radius:999px;padding:5px 9px;background:var(--secondary-background-color);color:var(--secondary-text-color);font-size:.76rem;font-weight:700}.state-pill .dot{width:9px;height:9px}.state-pill.active{color:var(--success-color,#2e7d32);background:color-mix(in srgb,var(--success-color,#2e7d32) 14%,var(--card-background-color))}.today-badge{display:inline-flex;align-items:center;gap:5px;margin-top:9px;padding:5px 8px;border-radius:8px;background:color-mix(in srgb,var(--primary-color) 11%,var(--card-background-color));color:var(--primary-color);font-size:.76rem;font-weight:700}.today-badge ha-icon{--mdc-icon-size:16px}.mobile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;margin-top:11px;border:1px solid var(--divider-color);border-radius:11px;overflow:hidden;background:var(--divider-color)}.metric{display:flex;flex-direction:column;gap:3px;min-width:0;padding:10px;background:var(--card-background-color)}.metric span:first-child,.mobile-programs>span{font-size:.72rem;color:var(--secondary-text-color)}.metric strong{font-size:.9rem;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.mobile-programs{display:flex;flex-direction:column;gap:3px;margin-top:10px;padding:9px 10px;border-radius:10px;background:var(--secondary-background-color);min-width:0}.mobile-programs strong{font-size:.82rem;overflow-wrap:anywhere}.titlebar h2{font-size:1.15rem}}
+      @media(max-width:480px){.summary ha-icon{--mdc-icon-size:23px}.summary-title{font-size:.8rem}.summary-value{font-size:.8rem}.summary-sub{font-size:.68rem}.metric{padding:9px 8px}.metric strong{font-size:.84rem}.state-pill{font-size:.7rem;padding:5px 7px}}
     </style><ha-card><div class="wrap">
       <div class="titlebar"><h2>${this._escape(this._config.title)}</h2><span class="version">VEGGA ${VEGGA_UI_VERSION}</span></div>
       <div class="summaries">
@@ -312,8 +338,10 @@ class VeggaOverviewCard extends HTMLElement {
         ${this._summaryCard("mdi:water-pump", "Programas activos", activePrograms?.state ?? "—")}
         ${this._summaryCard("mdi:database-sync", "Actualización", updated?.state ?? "—")}
       </div>
-      ${this._config.show_irrigation_order ? `<div class="section"><h3>Orden de riego de hoy</h3><div class="table-wrap">${irrigations.length ? `<table><thead><tr><th>Orden</th><th>Sector</th><th>Inicio real</th><th>Fin real</th><th>Duración</th><th>Consumo</th></tr></thead><tbody>${irrigationRows}</tbody></table>` : `<div class="empty">Todavía no hay riegos reales registrados hoy.</div>`}</div></div>` : ""}
-      <div class="section"><h3>Sectores</h3><div class="table-wrap">${sectors.length ? `<table><thead><tr><th>Sector</th><th>Estado</th><th>Inicio real</th><th>Fin real</th><th>Hoy</th><th>Ayer</th><th>Δ</th>${this._config.show_programs ? `<th class="programs">Programas relacionados</th>` : ""}</tr></thead><tbody>${sectorRows}</tbody></table>` : `<div class="empty">No se han encontrado sectores para el controlador indicado.</div>`}</div></div>
+      <div class="section">
+        <div class="section-title"><h3>Riegos por sector</h3><div class="section-note">Los riegos de hoy aparecen primero y en su orden real de inicio.</div></div>
+        ${sectors.length ? `<div class="table-wrap desktop-only"><table class="desktop-table"><thead><tr>${this._config.show_irrigation_order !== false ? "<th>Orden hoy</th>" : ""}<th>Sector</th><th>Estado</th><th>Inicio real</th><th>Fin real</th><th>Duración</th><th>Hoy</th><th>Ayer</th><th>Δ</th>${this._config.show_programs ? '<th class="programs">Programas relacionados</th>' : ""}</tr></thead><tbody>${desktopRows}</tbody></table></div><div class="mobile-list">${mobileCards}</div>` : `<div class="empty">No se han encontrado sectores para el controlador indicado.</div>`}
+      </div>
     </div></ha-card>`;
 
     this.shadowRoot.querySelectorAll("button[data-entity]").forEach((button) => {
