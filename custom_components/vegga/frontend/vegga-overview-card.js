@@ -1,4 +1,4 @@
-const VEGGA_OVERVIEW_VERSION = "0.5.2";
+const VEGGA_OVERVIEW_VERSION = "0.5.3";
 
 class VeggaOverviewCard extends HTMLElement {
   constructor() {
@@ -79,7 +79,10 @@ class VeggaOverviewCard extends HTMLElement {
 
     return candidates.map(consumption => {
       const number = this._sectorNumber(consumption);
-      const status = this._findSectorState(number, s => s.entity_id.startsWith("binary_sensor."));
+      const status = this._findSectorState(number, s =>
+        s.entity_id.startsWith("binary_sensor.") &&
+        (s.attributes?.device_class === "running" || /riego_activo/.test(s.entity_id) || /Riego activo$/i.test(s.attributes?.friendly_name || ""))
+      );
       const last = this._findSectorState(number, s =>
         s.attributes?.started_at !== undefined || s.attributes?.ended_at !== undefined ||
         /ultimo_riego|último_riego/.test(s.entity_id)
@@ -104,20 +107,66 @@ class VeggaOverviewCard extends HTMLElement {
     }).sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
   }
 
-  _parseDate(state) {
-    if (!this._validState(state)) return null;
-    let d = new Date(state.state);
-    if (Number.isNaN(d.getTime())) {
-      d = new Date(state.attributes?.ended_at || state.attributes?.started_at || state.last_changed);
-    }
+  _date(value) {
+    if (!value) return null;
+    const d = value instanceof Date ? value : new Date(value);
     return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  _sameLocalDay(a, b = new Date()) {
+    return Boolean(a) && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  _clock(value) {
+    const d = this._date(value);
+    return d ? d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—";
+  }
+
+  _actualMoment(value) {
+    const d = this._date(value);
+    if (!d) return "—";
+    const time = this._clock(d);
+    return this._sameLocalDay(d)
+      ? time
+      : `${d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" })} · ${time}`;
+  }
+
+  _actualTimes(sector) {
+    const attrs = sector.last?.attributes || {};
+    const consumptionAttrs = sector.consumption?.attributes || {};
+    let started = this._date(attrs.started_at || consumptionAttrs.last_started_at);
+    let ended = this._date(attrs.ended_at || consumptionAttrs.last_ended_at);
+    const active = sector.status?.state === "on";
+
+    // While a sector is running, Home Assistant's state transition is the real
+    // moment at which the integration detected that it started. Prefer it when
+    // it is newer than the latest completed history record.
+    if (active) {
+      const stateStarted = this._date(sector.status?.last_changed);
+      if (stateStarted && (!started || stateStarted > started)) started = stateStarted;
+      ended = null;
+    }
+
+    // Some VEGGA history payloads expose actual start + actual duration but no
+    // explicit end timestamp. In that case the end is derived from those two
+    // real measurements, never from the programmed schedule.
+    if (!active && started && !ended) {
+      const durationValue = sector.duration?.state ?? attrs.duration_minutes ?? consumptionAttrs.last_duration_minutes;
+      const durationMinutes = this._number(durationValue);
+      if (durationMinutes !== null && durationMinutes >= 0) {
+        ended = new Date(started.getTime() + durationMinutes * 60000);
+      }
+    }
+
+    return { started, ended, active };
   }
 
   _todayIrrigations(sectors) {
     const now = new Date();
-    return sectors.map(s => ({ ...s, date: this._parseDate(s.last) }))
-      .filter(s => s.date && s.date.getFullYear() === now.getFullYear() && s.date.getMonth() === now.getMonth() && s.date.getDate() === now.getDate())
-      .sort((a, b) => a.date - b.date);
+    return sectors
+      .map(sector => ({ ...sector, actual: this._actualTimes(sector) }))
+      .filter(sector => this._sameLocalDay(sector.actual.started, now) || this._sameLocalDay(sector.actual.ended, now))
+      .sort((a, b) => (a.actual.started || a.actual.ended) - (b.actual.started || b.actual.ended));
   }
 
   async _loadRegistry() {
@@ -173,11 +222,15 @@ class VeggaOverviewCard extends HTMLElement {
       const today = s.consumption?.state;
       const yesterday = s.consumption?.attributes?.yesterday_volume_m3;
       const delta = this._delta(today, yesterday);
-      const active = s.status?.state === "on";
+      const actual = this._actualTimes(s);
       const programs = this._validState(s.programs) ? s.programs.state : "—";
+      const startedTitle = actual.started ? actual.started.toLocaleString("es-ES") : "Sin inicio real registrado";
+      const endedTitle = actual.active ? "El sector continúa regando" : actual.ended ? actual.ended.toLocaleString("es-ES") : "Sin fin real registrado";
       return `<tr>
         <td><button class="sector-name" data-entity="${this._escape(s.linkEntity)}">${this._escape(s.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
-        <td class="center"><span class="dot ${active ? "active" : ""}"></span></td>
+        <td class="center"><span class="dot ${actual.active ? "active" : ""}"></span></td>
+        <td class="time" title="${this._escape(startedTitle)}">${this._actualMoment(actual.started)}</td>
+        <td class="time ${actual.active ? "running" : ""}" title="${this._escape(endedTitle)}">${actual.active ? "En curso" : this._actualMoment(actual.ended)}</td>
         <td class="num">${this._format(today)}</td>
         <td class="num">${this._format(yesterday)}</td>
         <td class="num"><span class="delta ${delta.cls}">${delta.text}</span></td>
@@ -186,16 +239,22 @@ class VeggaOverviewCard extends HTMLElement {
     }).join("");
 
     const irrigationRows = irrigations.map((s, i) => {
-      const time = s.date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
-      const durationValue = s.duration?.state ?? s.last?.attributes?.duration_minutes;
+      const durationValue = s.duration?.state ?? s.last?.attributes?.duration_minutes ?? s.consumption?.attributes?.last_duration_minutes;
       const duration = this._number(durationValue) === null ? "—" : `${this._format(durationValue, 0)} min`;
       const volume = s.last?.attributes?.volume_m3 ?? s.consumption?.state;
-      return `<tr><td class="order">${i + 1}.º</td><td><button class="sector-name" data-entity="${this._escape(s.linkEntity)}">${this._escape(s.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td><td class="center">${time}</td><td class="num">${duration}</td><td class="num">${this._format(volume)} m³</td></tr>`;
+      return `<tr>
+        <td class="order">${i + 1}.º</td>
+        <td><button class="sector-name" data-entity="${this._escape(s.linkEntity)}">${this._escape(s.name)}<ha-icon icon="mdi:chevron-right"></ha-icon></button></td>
+        <td class="time">${this._clock(s.actual.started)}</td>
+        <td class="time ${s.actual.active ? "running" : ""}">${s.actual.active ? "En curso" : this._clock(s.actual.ended)}</td>
+        <td class="num">${duration}</td>
+        <td class="num">${this._format(volume)} m³</td>
+      </tr>`;
     }).join("");
 
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section h3{margin:0 0 10px;font-size:1.05rem}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:680px}th,td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}tr:last-child td{border-bottom:0}.num{text-align:right;white-space:nowrap}.center{text-align:center}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb)}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color)}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.order{font-weight:800;text-align:center}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}
-      @media(max-width:899px){.wrap{padding:12px}.summaries{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{padding:11px}.programs{display:none}table{min-width:520px}.titlebar h2{font-size:1.15rem}}
+      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section h3{margin:0 0 10px;font-size:1.05rem}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:680px}th,td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}tr:last-child td{border-bottom:0}.num{text-align:right;white-space:nowrap}.center{text-align:center}.time{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}.running{color:var(--success-color,#2e7d32);font-weight:700}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb)}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color)}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.order{font-weight:800;text-align:center}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}
+      @media(max-width:899px){.wrap{padding:12px}.summaries{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{padding:11px}.programs{display:none}table{min-width:760px}.titlebar h2{font-size:1.15rem}}
       @media(max-width:480px){.summaries{grid-template-columns:1fr 1fr;gap:7px}.summary ha-icon{--mdc-icon-size:23px}.summary-title{font-size:.82rem}.summary-value{font-size:.82rem}}
     </style><ha-card><div class="wrap">
       <div class="titlebar"><h2>${this._escape(this._config.title)}</h2><span class="version">VEGGA ${VEGGA_OVERVIEW_VERSION}</span></div>
@@ -205,8 +264,8 @@ class VeggaOverviewCard extends HTMLElement {
         ${this._summaryCard("mdi:water-pump", "Programas activos", activePrograms?.state ?? "—")}
         ${this._summaryCard("mdi:database-sync", "Actualización", updated?.state ?? "—")}
       </div>
-      ${this._config.show_irrigation_order ? `<div class="section"><h3>Orden de riego de hoy</h3><div class="table-wrap">${irrigations.length ? `<table><thead><tr><th>Orden</th><th>Sector</th><th>Hora</th><th>Duración</th><th>Consumo</th></tr></thead><tbody>${irrigationRows}</tbody></table>` : `<div class="empty">Todavía no hay riegos registrados hoy.</div>`}</div></div>` : ""}
-      <div class="section"><h3>Sectores</h3><div class="table-wrap">${sectors.length ? `<table><thead><tr><th>Sector</th><th>Estado</th><th>Hoy</th><th>Ayer</th><th>Δ</th>${this._config.show_programs ? `<th>Programas relacionados</th>` : ""}</tr></thead><tbody>${sectorRows}</tbody></table>` : `<div class="empty">No se han encontrado sectores para el controlador indicado.</div>`}</div></div>
+      ${this._config.show_irrigation_order ? `<div class="section"><h3>Orden de riego de hoy</h3><div class="table-wrap">${irrigations.length ? `<table><thead><tr><th>Orden</th><th>Sector</th><th>Inicio real</th><th>Fin real</th><th>Duración</th><th>Consumo</th></tr></thead><tbody>${irrigationRows}</tbody></table>` : `<div class="empty">Todavía no hay riegos reales registrados hoy.</div>`}</div></div>` : ""}
+      <div class="section"><h3>Sectores</h3><div class="table-wrap">${sectors.length ? `<table><thead><tr><th>Sector</th><th>Estado</th><th>Inicio real</th><th>Fin real</th><th>Hoy</th><th>Ayer</th><th>Δ</th>${this._config.show_programs ? `<th class="programs">Programas relacionados</th>` : ""}</tr></thead><tbody>${sectorRows}</tbody></table>` : `<div class="empty">No se han encontrado sectores para el controlador indicado.</div>`}</div></div>
     </div></ha-card>`;
 
     this.shadowRoot.querySelectorAll("button[data-entity]").forEach(btn => btn.addEventListener("click", () => this._openEntity(btn.dataset.entity)));
