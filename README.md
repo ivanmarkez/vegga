@@ -74,3 +74,9 @@ order: oldest_first
 - La navegación usa el `device_id` real del registro de entidades.
 - Si no puede resolverse el dispositivo, abre la ventana de más información de la entidad.
 - El recurso frontend se sirve sin caché persistente, por lo que ya no hace falta cambiar manualmente `?v=` en cada actualización.
+
+## 0.4.31
+- Corrige definitivamente la actualización del frontend mediante un cargador estable sin caché y un módulo JavaScript versionado.
+- La cabecera completa de cada tarjeta de sector abre la ficha real del dispositivo.
+- La tarjeta `VEGGA - Orden de riego` ordena los sectores regados hoy por hora real y muestra 1.º, 2.º, 3.º…
+- El recurso permanece en `/vegga_static/vegga-sector-card.js`; no hay que cambiar `?v=` en cada actualización.
