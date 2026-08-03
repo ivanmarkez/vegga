@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.8";
+const VEGGA_UI_VERSION = "0.5.9";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -65,6 +65,10 @@ class VeggaOverviewCard extends HTMLElement {
     this._hass = null;
     this._registry = null;
     this._registryPromise = null;
+    this._actualHistory = new Map();
+    this._actualHistoryKey = "";
+    this._actualHistoryPromise = null;
+    this._actualHistoryError = null;
   }
 
   static getStubConfig() {
@@ -86,6 +90,7 @@ class VeggaOverviewCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._render();
+    this._scheduleActualHistory();
   }
 
   getCardSize() { return 12; }
@@ -188,6 +193,19 @@ class VeggaOverviewCard extends HTMLElement {
   }
 
   _actualTimes(sector) {
+    const observed = sector.status?.entity_id
+      ? this._actualHistory.get(sector.status.entity_id)
+      : null;
+    if (observed?.hasActivity) {
+      return {
+        started: observed.started,
+        ended: observed.active ? null : observed.ended,
+        active: observed.active,
+        durationMinutes: observed.durationMinutes,
+        source: "home_assistant_history",
+      };
+    }
+
     const attrs = sector.last?.attributes || {};
     const consumptionAttrs = sector.consumption?.attributes || {};
     let started = this._date(attrs.started_at || consumptionAttrs.last_started_at);
@@ -202,11 +220,144 @@ class VeggaOverviewCard extends HTMLElement {
       ended = null;
     }
 
-    // VEGGA history grouped by day can contain several activations of one
-    // sector. Keep the first start and last finish supplied by VEGGA; the
-    // duration is accumulated watering time and is not the elapsed span.
+    return { started, ended, active, durationMinutes, source: "vegga_summary" };
+  }
 
-    return { started, ended, active };
+  _historyRowState(row) {
+    return String(row?.state ?? row?.s ?? "").toLowerCase();
+  }
+
+  _historyRowDate(row) {
+    const value = row?.last_changed ?? row?.last_updated ?? row?.lc ?? row?.lu;
+    if (typeof value === "number") {
+      const millis = value > 100000000000 ? value : value * 1000;
+      const date = new Date(millis);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    return this._date(value);
+  }
+
+  _historyRowsForEntity(response, entityId) {
+    if (!response) return [];
+    if (!Array.isArray(response) && typeof response === "object") {
+      const direct = response[entityId];
+      if (Array.isArray(direct)) return direct;
+      if (Array.isArray(response.states?.[entityId])) return response.states[entityId];
+    }
+    if (Array.isArray(response)) {
+      if (response.length && Array.isArray(response[0])) {
+        const matching = response.find((rows) => rows?.some?.((row) => row?.entity_id === entityId));
+        return Array.isArray(matching) ? matching : [];
+      }
+      return response.filter((row) => row?.entity_id === entityId);
+    }
+    return [];
+  }
+
+  _deriveObservedWindow(rows, currentState, dayStart, now) {
+    const sorted = [...rows]
+      .map((row) => ({ row, at: this._historyRowDate(row) }))
+      .filter((item) => item.at)
+      .sort((a, b) => a.at - b.at);
+
+    let previousOn = false;
+    let activeSince = null;
+    let firstStart = null;
+    let lastEnd = null;
+    let totalMs = 0;
+    let sawActivity = false;
+
+    for (const { row, at } of sorted) {
+      const isOn = this._historyRowState(row) === "on";
+      const time = new Date(Math.max(dayStart.getTime(), at.getTime()));
+      if (isOn && !previousOn) {
+        activeSince = time;
+        if (!firstStart) firstStart = time;
+        sawActivity = true;
+      } else if (!isOn && previousOn) {
+        if (activeSince) totalMs += Math.max(0, time.getTime() - activeSince.getTime());
+        lastEnd = time;
+        activeSince = null;
+      }
+      previousOn = isOn;
+    }
+
+    const currentlyOn = String(currentState?.state || "").toLowerCase() === "on";
+    if (currentlyOn && !activeSince) {
+      const changed = this._date(currentState?.last_changed);
+      activeSince = changed && changed >= dayStart ? changed : dayStart;
+      if (!firstStart) firstStart = activeSince;
+      sawActivity = true;
+    }
+    if (currentlyOn && activeSince) {
+      totalMs += Math.max(0, now.getTime() - activeSince.getTime());
+    } else if (!currentlyOn && previousOn && activeSince) {
+      totalMs += Math.max(0, now.getTime() - activeSince.getTime());
+      lastEnd = now;
+      activeSince = null;
+    }
+
+    return {
+      hasActivity: sawActivity,
+      started: firstStart,
+      ended: lastEnd,
+      active: currentlyOn,
+      durationMinutes: sawActivity ? Math.max(0, Math.round(totalMs / 60000)) : null,
+    };
+  }
+
+  _localDayKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  _scheduleActualHistory() {
+    if (!this._hass || !this._config || typeof this._hass.callWS !== "function") return;
+    const sectors = this._sectors();
+    const statuses = sectors.map((sector) => sector.status).filter(Boolean);
+    if (!statuses.length) return;
+    const ids = [...new Set(statuses.map((state) => state.entity_id))].sort();
+    const stateSignature = ids.map((entityId) => {
+      const state = this._state(entityId);
+      return `${entityId}:${state?.state || ""}:${state?.last_changed || ""}`;
+    }).join("|");
+    const key = `${this._localDayKey()}|${stateSignature}`;
+    if (this._actualHistoryKey === key && (this._actualHistory.size || this._actualHistoryPromise)) return;
+    this._actualHistoryKey = key;
+    this._actualHistoryPromise = this._loadActualHistory(ids, key);
+  }
+
+  async _loadActualHistory(entityIds, key) {
+    const now = new Date();
+    const dayStart = new Date(now);
+    dayStart.setHours(0, 0, 0, 0);
+    try {
+      const response = await this._hass.callWS({
+        type: "history/history_during_period",
+        start_time: dayStart.toISOString(),
+        end_time: now.toISOString(),
+        entity_ids: entityIds,
+        minimal_response: false,
+        no_attributes: true,
+        significant_changes_only: false,
+      });
+      if (this._actualHistoryKey !== key) return;
+      const next = new Map();
+      for (const entityId of entityIds) {
+        const rows = this._historyRowsForEntity(response, entityId);
+        next.set(entityId, this._deriveObservedWindow(rows, this._state(entityId), dayStart, now));
+      }
+      this._actualHistory = next;
+      this._actualHistoryError = null;
+    } catch (error) {
+      if (this._actualHistoryKey !== key) return;
+      this._actualHistoryError = String(error?.message || error || "No se pudo leer el histórico de Home Assistant");
+    } finally {
+      if (this._actualHistoryKey === key) this._actualHistoryPromise = null;
+      this._render();
+    }
   }
 
   _todayIrrigations(sectors) {
@@ -284,7 +435,8 @@ class VeggaOverviewCard extends HTMLElement {
       const yesterday = sector.consumption?.attributes?.yesterday_volume_m3;
       const delta = this._delta(today, yesterday);
       const actual = this._actualTimes(sector);
-      const durationValue = sector.duration?.state
+      const durationValue = actual.durationMinutes
+        ?? sector.duration?.state
         ?? sector.last?.attributes?.duration_minutes
         ?? sector.consumption?.attributes?.last_duration_minutes;
       const durationNumber = this._number(durationValue);
@@ -384,6 +536,7 @@ class VeggaSectorControlsCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._render();
+    this._scheduleActualHistory();
   }
 
   getCardSize() { return 12; }
@@ -535,6 +688,7 @@ class VeggaProgramControlsCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._render();
+    this._scheduleActualHistory();
   }
 
   getCardSize() { return 8; }

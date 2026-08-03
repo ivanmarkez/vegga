@@ -1,7 +1,7 @@
-## 0.5.8 — Hora local y primer inicio real
+# VEGGA Agrónic para Home Assistant — v0.5.9
 
-- Corrige el desfase de dos horas de los registros VEGGA sin zona horaria.
-- Interpreta las horas del Agrónic en la zona horaria configurada en Home Assistant.
-- Usa directamente `dateFrom` como primer inicio real y `dateTo` como último fin real.
-- No reconstruye las horas a partir de la duración acumulada diaria.
-- Mantiene el resumen móvil unificado y las tarjetas de control de sectores y programas.
+- Corrige las horas reales usando los cambios de estado registrados por Home Assistant.
+- El inicio es el primer cambio real a `on` del sector durante el día.
+- El fin es el último cambio real a `off`; la duración suma los intervalos activos.
+- Evita usar `dateFrom` del histórico diario de VEGGA, que representa el inicio del bloque agregado y no el arranque real del sector.
+- Mantiene el mismo recurso frontend y el mismo YAML.
