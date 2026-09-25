@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to VEGGA",
+        "description": "Enter your VEGGA credentials and the Agrónic device ID. Automatic discovery is temporarily disabled because VEGGA uses an undocumented internal user identifier.\\n\\nDiagnostic: {debug}",
+        "data": {
+          "username": "VEGGA username",
+          "password": "VEGGA password",
+          "scan_interval": "Update interval (seconds)",
+          "device_id": "Agrónic device ID"
+        }
+      },
+      "device": {
+        "title": "Select controller",
+        "description": "Select the Agrónic controller to add.",
+        "data": {
+          "device_id": "Controller"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to VEGGA.",
+      "invalid_auth": "Invalid username or password.",
+      "no_devices": "No controllers were found for this account.",
+      "unknown": "Unexpected error. Check the Home Assistant log."
+    },
+    "abort": {
+      "already_configured": "This controller is already configured."
+    }
+  }
+}
