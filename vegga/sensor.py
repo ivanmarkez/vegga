@@ -187,14 +187,42 @@ def _sector_aliases(sector: dict[str, Any], number: int, name: str) -> tuple[set
 
 
 def _program_sector_entries(program: dict[str, Any]) -> list[dict[str, Any]]:
-    """Locate sector references and preserve their order inside one program.
+    """Locate the sectors that are actually assigned to one program.
 
-    VEGGA has used several payload shapes between firmware versions.  We only
-    walk branches whose key explicitly mentions sectors/stations/valves, which
-    avoids confusing unrelated numeric ids with a sector number.
+    Important: fields such as ``sectorPerGroup`` describe program behaviour;
+    they are *not* sector references.  Earlier versions matched every key that
+    merely contained the word ``sector``, which made sector 1 appear in almost
+    every program because ``sectorPerGroup`` is commonly equal to 1.
+
+    We therefore accept only known sector containers (for example
+    ``programSector``) and explicit numbered keys such as ``sector1``.
     """
     entries: list[dict[str, Any]] = []
-    branch_words = ("sector", "station", "valve", "salida", "unidadriego")
+
+    collection_keys = {
+        "programsector",
+        "programsectors",
+        "progsector",
+        "progsectors",
+        "sectors",
+        "sectorlist",
+        "stations",
+        "stationlist",
+        "valves",
+        "valvelist",
+        "irrigationsector",
+        "irrigationsectors",
+    }
+
+    def normalise_key(key: Any) -> str:
+        return _normalise_text(key).replace(" ", "").replace("_", "").replace("-", "")
+
+    def is_numbered_sector_key(key: str) -> bool:
+        for prefix in ("sector", "station", "valve"):
+            suffix = key[len(prefix):] if key.startswith(prefix) else ""
+            if suffix.isdigit():
+                return True
+        return False
 
     def add(value: Any, order: int, path: str) -> None:
         if isinstance(value, (int, float, str)):
@@ -226,23 +254,30 @@ def _program_sector_entries(program: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(value, dict):
             return
         for key, child in value.items():
-            key_norm = _normalise_text(key).replace(" ", "")
-            if not any(word in key_norm for word in branch_words):
+            key_norm = normalise_key(key)
+            is_collection = key_norm in collection_keys
+            is_numbered = is_numbered_sector_key(key_norm)
+
+            if not is_collection and not is_numbered:
                 continue
+
             if isinstance(child, list):
                 for index, item in enumerate(child, start=1):
                     add(item, index, f"{path}.{key}[{index - 1}]")
             elif isinstance(child, dict):
-                # Maps may be keyed by the sector number.
+                # Maps may be keyed by sector number. If an item already
+                # contains its own sector reference, keep that value.
                 for index, (map_key, item) in enumerate(child.items(), start=1):
                     if isinstance(item, dict):
                         candidate = dict(item)
                         candidate.setdefault("sector", map_key)
                         add(candidate, index, f"{path}.{key}.{map_key}")
-                    else:
-                        add(map_key if bool(item) else item, index, f"{path}.{key}.{map_key}")
-            else:
+                    elif bool(item):
+                        add(map_key, index, f"{path}.{key}.{map_key}")
+            elif is_numbered:
+                # Some payloads use scalar keys such as sector1, sector2...
                 add(child, 1, f"{path}.{key}")
+
     walk(program)
     return entries
 
