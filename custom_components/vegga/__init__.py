@@ -21,11 +21,12 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
 ]
 
-VERSION = "0.5.19"
+VERSION = "0.5.20"
 FRONTEND_BASE = "/vegga_static"
 FRONTEND_FILES = (
     "vegga-sector-card.js",
     "vegga-cards-v0.4.31.js",
+    "vegga-cards-v0.4.32.js",
     "vegga-overview-card.js",
 )
 OVERVIEW_MODULE_URL = f"{FRONTEND_BASE}/vegga-overview-card.js?v={VERSION}"

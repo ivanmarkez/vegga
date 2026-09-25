@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.19";
+const VEGGA_UI_VERSION = "0.5.20";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },
@@ -40,6 +40,47 @@ const VeggaUi = {
   number(value) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+  },
+  programSchedules(state) {
+    const programs = Array.isArray(state?.attributes?.programs) ? state.attributes.programs : [];
+    return programs.map((program) => ({
+      programNumber: this.number(program?.program_number),
+      programName: String(program?.program_name || "").trim(),
+      scheduleType: String(program?.schedule_type || "").trim(),
+      scheduleText: String(program?.schedule_text || program?.active_days_text || "").trim(),
+      weekdays: program?.weekdays && typeof program.weekdays === "object" ? program.weekdays : null,
+    }));
+  },
+  sectorProgramsState(hass, config, sectorNumber) {
+    const number = this.number(sectorNumber);
+    if (number === null) return null;
+    const matches = Object.values(hass?.states || {}).filter((state) =>
+      state.entity_id.startsWith("sensor.") &&
+      this.number(state.attributes?.sector_number) === number &&
+      (Array.isArray(state.attributes?.programs) || state.attributes?.program_count !== undefined)
+    );
+    return matches.find((state) => this.belongs(state, config, hass)) || (matches.length === 1 ? matches[0] : null);
+  },
+  programScheduleHtml(state, options = {}) {
+    const schedules = this.programSchedules(state);
+    if (!schedules.length) return "";
+    const compact = options.compact === true;
+    const labels = [
+      ["monday", "L"], ["tuesday", "M"], ["wednesday", "X"],
+      ["thursday", "J"], ["friday", "V"], ["saturday", "S"], ["sunday", "D"],
+    ];
+    return `<div class="vegga-program-schedules ${compact ? "compact" : ""}">${schedules.map((schedule) => {
+      const label = schedule.programNumber !== null ? `P${schedule.programNumber}` : "Programa";
+      const fullName = schedule.programName ? `${label} ${schedule.programName}` : label;
+      if (schedule.scheduleType === "weekdays" && schedule.weekdays) {
+        return `<div class="vegga-program-schedule"><span class="vegga-program-label" title="${this.escape(fullName)}">${this.escape(label)}</span><span class="vegga-weekdays">${labels.map(([key, day]) => `<span class="vegga-day ${schedule.weekdays[key] ? "active" : "inactive"}" title="${this.escape(fullName)} · ${day}">${day}</span>`).join("")}</span></div>`;
+      }
+      const text = schedule.scheduleText || "Sin calendario semanal";
+      return `<div class="vegga-program-schedule"><span class="vegga-program-label" title="${this.escape(fullName)}">${this.escape(label)}</span><span class="vegga-frequency">${this.escape(text)}</span></div>`;
+    }).join("")}</div>`;
+  },
+  scheduleCss() {
+    return `.vegga-program-schedules{display:flex;flex-direction:column;gap:5px;min-width:max-content}.vegga-program-schedule{display:flex;align-items:center;gap:7px}.vegga-program-label{min-width:29px;font-size:.72rem;font-weight:800;color:var(--secondary-text-color);white-space:nowrap}.vegga-weekdays{display:flex;gap:3px}.vegga-day{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:.7rem;font-weight:800;line-height:1}.vegga-day.active{background:var(--primary-color);color:var(--text-primary-color,#fff)}.vegga-day.inactive{background:var(--secondary-background-color);color:var(--disabled-text-color,var(--secondary-text-color));opacity:.58}.vegga-frequency{font-size:.76rem;font-weight:650;color:var(--primary-text-color);white-space:nowrap}.vegga-program-schedules.compact .vegga-program-schedule{gap:5px}.vegga-program-schedules.compact .vegga-day{width:20px;height:20px;font-size:.66rem}`;
   },
   notify(host, message) {
     host.dispatchEvent(new CustomEvent("hass-notification", {
@@ -479,12 +520,13 @@ class VeggaOverviewCard extends HTMLElement {
         if (programName) programs = String(programName);
         else if (programNumber !== undefined && programNumber !== null) programs = `Programa ${programNumber}`;
       }
-      const hasPrograms = !["—", "Sin programa relacionado"].includes(String(programs));
+      const programScheduleHtml = VeggaUi.programScheduleHtml(sector.programs);
+      const hasPrograms = Boolean(programScheduleHtml) || !["—", "Sin programa relacionado"].includes(String(programs));
       const order = todayOrder.get(sector.number) || null;
       const startedTitle = actual.started ? actual.started.toLocaleString("es-ES") : "Sin inicio real registrado";
       const endedTitle = actual.active ? "El sector continúa regando" : actual.ended ? actual.ended.toLocaleString("es-ES") : "Sin fin real registrado";
       return {
-        sector, today, yesterday, delta, actual, duration, programs, hasPrograms, order,
+        sector, today, yesterday, delta, actual, duration, programs, programScheduleHtml, hasPrograms, order,
         startedTitle, endedTitle,
       };
     });
@@ -499,7 +541,7 @@ class VeggaOverviewCard extends HTMLElement {
       <td class="num">${this._format(item.today)}</td>
       <td class="num">${this._format(item.yesterday)}</td>
       <td class="num"><span class="delta ${item.delta.cls}">${item.delta.text}</span></td>
-      ${this._config.show_programs ? `<td class="programs" title="${this._escape(item.programs)}">${this._escape(item.programs)}</td>` : ""}
+      ${this._config.show_programs ? `<td class="programs" title="${this._escape(item.programs)}">${item.programScheduleHtml || this._escape(item.programs)}</td>` : ""}
     </tr>`).join("");
 
     const mobileCards = viewModel.map((item) => `<article class="sector-mobile ${item.order ? "today" : ""}">
@@ -516,10 +558,12 @@ class VeggaOverviewCard extends HTMLElement {
         <div class="metric"><span>Hoy</span><strong>${this._format(item.today)} m³</strong></div>
         <div class="metric"><span>Ayer</span><strong>${this._format(item.yesterday)} m³</strong></div>
       </div>
+      ${item.hasPrograms ? `<div class="mobile-programming"><span class="mobile-programming-title">Programación</span>${item.programScheduleHtml || `<span class="mobile-program-fallback">${this._escape(item.programs)}</span>`}</div>` : ""}
     </article>`).join("");
 
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:10px}.section-title h3{margin:0;font-size:1.05rem}.section-note{font-size:.78rem;color:var(--secondary-text-color);text-align:right}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}.desktop-table{width:100%;border-collapse:collapse;min-width:1050px}.desktop-table th,.desktop-table td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}.desktop-table th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}.desktop-table tr:last-child td{border-bottom:0}.desktop-table .today-row{background:color-mix(in srgb,var(--primary-color) 4%,transparent)}.num{text-align:right!important;white-space:nowrap}.center{text-align:center!important}.time{text-align:center!important;white-space:nowrap;font-variant-numeric:tabular-nums}.running{color:var(--success-color,#2e7d32)!important;font-weight:700}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb);flex:0 0 auto}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color);flex:0 0 auto}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.order{font-weight:800;text-align:center!important;white-space:nowrap}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}.mobile-list{display:none}
+      ${VeggaUi.scheduleCss()}
+      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.titlebar h2{margin:0;font-size:1.35rem}.version{color:var(--secondary-text-color);font-size:.75rem}.summaries{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}.summary{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.summary ha-icon{--mdc-icon-size:29px;color:var(--primary-color)}.summary-title{font-weight:650}.summary-value{font-size:.95rem;margin-top:2px}.summary-sub{font-size:.76rem;color:var(--secondary-text-color);margin-top:2px}.section{margin-top:18px}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:10px}.section-title h3{margin:0;font-size:1.05rem}.section-note{font-size:.78rem;color:var(--secondary-text-color);text-align:right}.table-wrap{overflow:auto;border:1px solid var(--divider-color);border-radius:12px}.desktop-table{width:100%;border-collapse:collapse;min-width:1050px}.desktop-table th,.desktop-table td{padding:9px 10px;border-bottom:1px solid var(--divider-color);text-align:left}.desktop-table th{background:var(--secondary-background-color);position:sticky;top:0;z-index:1;font-size:.82rem}.desktop-table tr:last-child td{border-bottom:0}.desktop-table .today-row{background:color-mix(in srgb,var(--primary-color) 4%,transparent)}.num{text-align:right!important;white-space:nowrap}.center{text-align:center!important}.time{text-align:center!important;white-space:nowrap;font-variant-numeric:tabular-nums}.running{color:var(--success-color,#2e7d32)!important;font-weight:700}.sector-name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:650;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:3px;text-align:left}.sector-name:hover{color:var(--primary-color);text-decoration:underline}.sector-name ha-icon{--mdc-icon-size:16px}.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#b39ddb);flex:0 0 auto}.dot.active{background:var(--success-color,#2e7d32);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-color,#2e7d32) 20%,transparent)}.delta{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.delta:before{content:"";width:10px;height:10px;border-radius:50%;background:var(--secondary-text-color);flex:0 0 auto}.delta.good:before{background:var(--success-color,#2e7d32)}.delta.warn:before{background:var(--warning-color,#f9a825)}.delta.bad:before{background:var(--error-color,#d32f2f)}.programs{max-width:360px;white-space:normal}.order{font-weight:800;text-align:center!important;white-space:nowrap}.empty{padding:18px;color:var(--secondary-text-color);text-align:center}.mobile-list{display:none}.mobile-programming{margin-top:8px;padding-top:8px;border-top:1px solid var(--divider-color);display:flex;align-items:flex-start;gap:9px}.mobile-programming-title{min-width:78px;padding-top:3px;font-size:.7rem;color:var(--secondary-text-color);font-weight:700}.mobile-program-fallback{font-size:.8rem;color:var(--primary-text-color)}
       @media(max-width:899px){.wrap{padding:10px}.summaries{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.summary{padding:9px;min-width:0}.summary>div{min-width:0}.summary-title{font-size:.86rem}.summary-value{font-size:.9rem}.summary-sub{font-size:.7rem}.summary-value,.summary-sub{overflow:hidden;text-overflow:ellipsis}.section{margin-top:13px}.section-title{align-items:flex-start;flex-direction:column;gap:2px;margin-bottom:7px}.section-title h3{font-size:1.12rem}.section-note{font-size:.82rem;text-align:left}.desktop-only{display:none}.mobile-list{display:grid;gap:7px}.sector-mobile{border:1px solid var(--divider-color);border-radius:12px;padding:9px;background:var(--card-background-color);min-width:0}.sector-mobile.today{border-left:3px solid var(--primary-color);padding-left:7px}.mobile-head{display:flex;align-items:center;gap:7px;margin-bottom:7px}.mobile-name{font-size:1.02rem;min-width:0;overflow-wrap:anywhere}.mobile-indicators{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:7px;flex:0 0 auto}.mobile-watering{display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;background:color-mix(in srgb,var(--success-color,#2e7d32) 17%,var(--card-background-color));color:var(--success-color,#2e7d32);font-size:.72rem;line-height:1;font-weight:800;white-space:nowrap}.mobile-watering ha-icon{--mdc-icon-size:17px}.mobile-delta-check{display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:0 0 auto;line-height:1;white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums}.mobile-delta-check ha-icon{--mdc-icon-size:22px}.mobile-delta-check .delta-text{font-size:.96rem;line-height:1}.mobile-delta-check.good{color:var(--success-color,#2e7d32)}.mobile-delta-check.warn{color:var(--warning-color,#f9a825)}.mobile-delta-check.bad{color:var(--error-color,#d32f2f)}.mobile-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;border:1px solid var(--divider-color);border-radius:9px;overflow:hidden;background:var(--divider-color)}.metric{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;min-width:0;min-height:45px;padding:6px 5px;background:var(--card-background-color)}.metric > span:first-child{font-size:.66rem;line-height:1.1;color:var(--secondary-text-color);white-space:nowrap}.metric strong{max-width:100%;font-size:1rem;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.titlebar h2{font-size:1.18rem}}
       @media(max-width:480px){.summary ha-icon{--mdc-icon-size:21px}.summary-title{font-size:.82rem}.summary-value{font-size:.86rem}.summary-sub{font-size:.68rem}.metric{min-height:42px;padding:5px 3px}.metric > span:first-child{font-size:.62rem}.metric strong{font-size:.96rem}.mobile-name{font-size:.98rem}.mobile-watering{font-size:.68rem;padding:4px 6px}.mobile-watering ha-icon{--mdc-icon-size:16px}.mobile-delta-check ha-icon{--mdc-icon-size:21px}.mobile-delta-check .delta-text{font-size:.92rem}}
     </style><ha-card><div class="wrap">
@@ -532,7 +576,7 @@ class VeggaOverviewCard extends HTMLElement {
       </div>
       <div class="section">
         <div class="section-title"><h3>Riegos por sector</h3><div class="section-note">Los riegos de hoy aparecen primero y en su orden real de inicio.</div></div>
-        ${sectors.length ? `<div class="table-wrap desktop-only"><table class="desktop-table"><thead><tr>${this._config.show_irrigation_order !== false ? "<th>Orden hoy</th>" : ""}<th>Sector</th><th>Estado</th><th>Inicio real</th><th>Fin real</th><th>Duración</th><th>Hoy</th><th>Ayer</th><th>Δ</th>${this._config.show_programs ? '<th class="programs">Programas relacionados</th>' : ""}</tr></thead><tbody>${desktopRows}</tbody></table></div><div class="mobile-list">${mobileCards}</div>` : `<div class="empty">No se han encontrado sectores para el controlador indicado.</div>`}
+        ${sectors.length ? `<div class="table-wrap desktop-only"><table class="desktop-table"><thead><tr>${this._config.show_irrigation_order !== false ? "<th>Orden hoy</th>" : ""}<th>Sector</th><th>Estado</th><th>Inicio real</th><th>Fin real</th><th>Duración</th><th>Hoy</th><th>Ayer</th><th>Δ</th>${this._config.show_programs ? '<th class="programs">Programación</th>' : ""}</tr></thead><tbody>${desktopRows}</tbody></table></div><div class="mobile-list">${mobileCards}</div>` : `<div class="empty">No se han encontrado sectores para el controlador indicado.</div>`}
       </div>
     </div></ha-card>`;
 
@@ -597,7 +641,11 @@ class VeggaSectorControlsCard extends HTMLElement {
         // entity_id is based on the sector device name, not the controller.
         return true;
       })
-      .map((state) => ({ state, name: this._sectorName(state) }))
+      .map((state) => ({
+        state,
+        name: this._sectorName(state),
+        programs: VeggaUi.sectorProgramsState(this._hass, this._config, state.attributes?.sector_number),
+      }))
       .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base", numeric: true }));
   }
 
@@ -647,12 +695,14 @@ class VeggaSectorControlsCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot || !this._config || !this._hass) return;
     const sectors = this._selects();
-    const rows = sectors.map(({ state, name }) => {
+    const rows = sectors.map(({ state, name, programs }) => {
       const available = !["unknown", "unavailable", "none", ""].includes(String(state.state).toLowerCase());
+      const schedule = VeggaUi.programScheduleHtml(programs, { compact: true });
       return `<div class="sector-row">
         <div class="sector-info">
           <button class="name" data-info="${VeggaUi.escape(state.entity_id)}">${VeggaUi.escape(name)}<ha-icon icon="mdi:information-outline"></ha-icon></button>
           <span class="current">Actual: <strong>${VeggaUi.escape(state.state)}</strong></span>
+          ${schedule ? `<div class="control-schedule">${schedule}</div>` : ""}
         </div>
         <div class="modes">
           ${VEGGA_SECTOR_MODES.map((mode) => `<button class="mode ${mode.cls} ${state.state === mode.value ? "selected" : ""}" data-entity="${VeggaUi.escape(state.entity_id)}" data-option="${VeggaUi.escape(mode.value)}" data-name="${VeggaUi.escape(name)}" data-current="${VeggaUi.escape(state.state)}" ${!available || this._busy || state.state === mode.value ? "disabled" : ""}>
@@ -664,7 +714,8 @@ class VeggaSectorControlsCard extends HTMLElement {
 
     const pending = this._pending;
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.titlebar h2{margin:0;font-size:1.35rem}.count{color:var(--secondary-text-color);font-size:.82rem}.list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.sector-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(280px,1.35fr);align-items:center;gap:12px;padding:12px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.sector-info{min-width:0;display:flex;flex-direction:column;gap:4px}.name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:700;text-align:left;padding:0;cursor:pointer;display:flex;align-items:center;gap:5px;min-width:0}.name:hover{color:var(--primary-color)}.name ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color)}.current{font-size:.78rem;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.mode{min-height:48px;border:1px solid var(--divider-color);border-radius:11px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit;font-size:.8rem;font-weight:650;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px}.mode:hover:not(:disabled){border-color:var(--primary-color);transform:translateY(-1px)}.mode:disabled{cursor:default;opacity:.52}.mode.selected{border:2px solid var(--primary-color);background:color-mix(in srgb,var(--primary-color) 12%,var(--card-background-color));opacity:1}.mode ha-icon{--mdc-icon-size:20px}.auto ha-icon{color:var(--primary-color)}.start ha-icon{color:var(--success-color,#2e7d32)}.stop ha-icon{color:var(--error-color,#d32f2f)}.empty{padding:22px;text-align:center;color:var(--secondary-text-color);border:1px solid var(--divider-color);border-radius:14px}dialog{width:min(460px,calc(100vw - 28px));border:0;border-radius:18px;padding:0;color:var(--primary-text-color);background:var(--card-background-color);box-shadow:0 14px 44px rgba(0,0,0,.4)}dialog::backdrop{background:rgba(0,0,0,.58)}.dialog-body{padding:24px}.dialog-title{font-size:1.18rem;font-weight:750;display:flex;align-items:center;gap:9px}.dialog-title ha-icon{color:var(--warning-color,#f9a825)}.change{margin:17px 0;padding:14px;border-radius:12px;background:var(--secondary-background-color);line-height:1.5}.message{font-size:.9rem;color:var(--primary-color);margin-top:12px}.message.error{color:var(--error-color)}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}.dialog-actions button{min-height:42px;border-radius:10px;padding:0 16px;font:inherit;font-weight:700;cursor:pointer}.cancel{border:1px solid var(--divider-color);background:transparent;color:var(--primary-text-color)}.confirm{border:0;background:var(--primary-color);color:var(--text-primary-color,#fff)}
+      ${VeggaUi.scheduleCss()}
+      :host{display:block}ha-card{overflow:hidden}.wrap{padding:18px}.titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.titlebar h2{margin:0;font-size:1.35rem}.count{color:var(--secondary-text-color);font-size:.82rem}.list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.sector-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(280px,1.35fr);align-items:center;gap:12px;padding:12px;border:1px solid var(--divider-color);border-radius:14px;background:var(--card-background-color)}.sector-info{min-width:0;display:flex;flex-direction:column;gap:4px}.name{border:0;background:transparent;color:var(--primary-text-color);font:inherit;font-weight:700;text-align:left;padding:0;cursor:pointer;display:flex;align-items:center;gap:5px;min-width:0}.name:hover{color:var(--primary-color)}.name ha-icon{--mdc-icon-size:16px;color:var(--secondary-text-color)}.current{font-size:.78rem;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.control-schedule{margin-top:4px;overflow-x:auto;padding-bottom:2px}.modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.mode{min-height:48px;border:1px solid var(--divider-color);border-radius:11px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit;font-size:.8rem;font-weight:650;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px}.mode:hover:not(:disabled){border-color:var(--primary-color);transform:translateY(-1px)}.mode:disabled{cursor:default;opacity:.52}.mode.selected{border:2px solid var(--primary-color);background:color-mix(in srgb,var(--primary-color) 12%,var(--card-background-color));opacity:1}.mode ha-icon{--mdc-icon-size:20px}.auto ha-icon{color:var(--primary-color)}.start ha-icon{color:var(--success-color,#2e7d32)}.stop ha-icon{color:var(--error-color,#d32f2f)}.empty{padding:22px;text-align:center;color:var(--secondary-text-color);border:1px solid var(--divider-color);border-radius:14px}dialog{width:min(460px,calc(100vw - 28px));border:0;border-radius:18px;padding:0;color:var(--primary-text-color);background:var(--card-background-color);box-shadow:0 14px 44px rgba(0,0,0,.4)}dialog::backdrop{background:rgba(0,0,0,.58)}.dialog-body{padding:24px}.dialog-title{font-size:1.18rem;font-weight:750;display:flex;align-items:center;gap:9px}.dialog-title ha-icon{color:var(--warning-color,#f9a825)}.change{margin:17px 0;padding:14px;border-radius:12px;background:var(--secondary-background-color);line-height:1.5}.message{font-size:.9rem;color:var(--primary-color);margin-top:12px}.message.error{color:var(--error-color)}.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}.dialog-actions button{min-height:42px;border-radius:10px;padding:0 16px;font:inherit;font-weight:700;cursor:pointer}.cancel{border:1px solid var(--divider-color);background:transparent;color:var(--primary-text-color)}.confirm{border:0;background:var(--primary-color);color:var(--text-primary-color,#fff)}
       @media(max-width:1100px){.list{grid-template-columns:1fr}}
       @media(max-width:600px){.wrap{padding:12px}.sector-row{grid-template-columns:1fr;gap:9px}.modes{gap:5px}.mode{min-height:50px;padding:4px;font-size:.76rem}.titlebar h2{font-size:1.15rem}}
     </style><ha-card><div class="wrap">

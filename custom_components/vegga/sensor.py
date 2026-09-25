@@ -70,14 +70,113 @@ def _program_number(program: dict[str, Any], fallback: int) -> int:
         if value >= 0:
             # The public list is normally one-based; zero is accepted for firmware variants.
             return value if value > 0 else fallback
+
+    # A-5500 program payloads normally carry the program number in pk.id.
+    pk = program.get("pk")
+    if isinstance(pk, dict):
+        try:
+            value = int(pk.get("id"))
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
     return fallback
 
 
-def _sector_aliases(sector: dict[str, Any], number: int, name: str) -> tuple[set[int], set[str]]:
-    numbers = {number, number - 1}
-    for key in ("id", "sectorId", "sector_id", "number", "sectorNumber", "sector_number", "_agronic_number"):
+_WEEKDAYS: tuple[tuple[str, str, str], ...] = (
+    ("monday", "L", "Lun"),
+    ("tuesday", "M", "Mar"),
+    ("wednesday", "X", "Mié"),
+    ("thursday", "J", "Jue"),
+    ("friday", "V", "Vie"),
+    ("saturday", "S", "Sáb"),
+    ("sunday", "D", "Dom"),
+)
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on", "si", "sí"}
+    return False
+
+
+def _first_int(program: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
         try:
-            numbers.add(int(sector.get(key)))
+            value = int(program.get(key))
+        except (TypeError, ValueError):
+            continue
+        return value
+    return None
+
+
+def _program_schedule(program: dict[str, Any]) -> dict[str, Any]:
+    """Return the irrigation calendar using the same fields as VEGGA web.
+
+    Weekly programs expose monday..sunday. Programs configured by frequency
+    use daysFreq/freqDays instead, so they intentionally do not get assigned
+    to fixed weekdays. Sequential programs likewise have no weekly calendar.
+    """
+    weekdays = {key: _as_bool(program.get(key)) for key, _short, _label in _WEEKDAYS}
+    active_days = [label for key, _short, label in _WEEKDAYS if weekdays[key]]
+    active_day_keys = [key for key, _short, _label in _WEEKDAYS if weekdays[key]]
+    active_day_numbers = [index for index, (key, _short, _label) in enumerate(_WEEKDAYS, start=1) if weekdays[key]]
+
+    days_freq = _as_bool(program.get("daysFreq")) or _as_bool(program.get("daysFrequency"))
+    if days_freq:
+        frequency = _first_int(program, "freqDays", "frequencyDays", "xFreqDays")
+        text = f"Cada {frequency} días" if frequency and frequency > 0 else "Por frecuencia de días"
+        return {
+            "schedule_type": "frequency",
+            "schedule_text": text,
+            "days_frequency": frequency,
+            "weekdays": weekdays,
+            "active_days": [],
+            "active_day_keys": [],
+            "active_day_numbers": [],
+            "active_days_text": text,
+        }
+
+    program_type = _first_int(program, "type", "programType", "startType")
+    if program_type == 1:
+        return {
+            "schedule_type": "sequential",
+            "schedule_text": "Secuencial",
+            "days_frequency": None,
+            "weekdays": weekdays,
+            "active_days": [],
+            "active_day_keys": [],
+            "active_day_numbers": [],
+            "active_days_text": "Secuencial",
+        }
+
+    text = " · ".join(active_days) if active_days else "Sin días configurados"
+    return {
+        "schedule_type": "weekdays",
+        "schedule_text": text,
+        "days_frequency": None,
+        "weekdays": weekdays,
+        "active_days": active_days,
+        "active_day_keys": active_day_keys,
+        "active_day_numbers": active_day_numbers,
+        "active_days_text": text,
+    }
+
+
+def _sector_aliases(sector: dict[str, Any], number: int, name: str) -> tuple[set[int], set[str]]:
+    # programSector.sector on the A-5500 is one-based and uses 0 only as an
+    # empty slot. Do not add number-1 here: doing so can make sector N inherit
+    # the programs (and therefore the calendar) of sector N-1.
+    numbers = {number}
+    for key in ("number", "sectorNumber", "sector_number", "_agronic_number"):
+        try:
+            value = int(sector.get(key))
+            if value > 0:
+                numbers.add(value)
         except (TypeError, ValueError):
             pass
     names = {_normalise_text(name), _normalise_text(f"Sector {number}")}
@@ -166,12 +265,14 @@ def _sector_program_links(data: dict[str, Any], sector_number: int, sector_name:
             if ref_match or name_match:
                 number = _program_number(program, fallback)
                 name = _program_name(program, fallback)
+                schedule = _program_schedule(program)
                 links.append({
                     "program_number": number,
                     "program_name": name,
                     "order": entry.get("order"),
                     "label": f"P{number} {name}",
                     "source_path": entry.get("path"),
+                    **schedule,
                 })
                 break
     return links
@@ -483,6 +584,19 @@ class VeggaSectorProgramsSensor(VeggaSectorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         links = self._links()
+        weekly_union = {key: False for key, _short, _label in _WEEKDAYS}
+        for item in links:
+            if item.get("schedule_type") != "weekdays":
+                continue
+            for key in weekly_union:
+                weekly_union[key] = weekly_union[key] or bool(item.get("weekdays", {}).get(key))
+
+        union_days = [
+            label for key, _short, label in _WEEKDAYS if weekly_union[key]
+        ]
+        schedule_summary = " | ".join(
+            f"P{item['program_number']}: {item.get('schedule_text', '—')}" for item in links
+        )
         return {
             "vegga_device_id": str(self.coordinator.api.device_id),
             "sector_number": self._number,
@@ -491,6 +605,10 @@ class VeggaSectorProgramsSensor(VeggaSectorEntity, SensorEntity):
             "programs": links,
             "program_names": [item["program_name"] for item in links],
             "program_numbers": [item["program_number"] for item in links],
+            "schedule_summary": schedule_summary,
+            "weekly_days_union": weekly_union,
+            "weekly_active_days": union_days,
+            "weekly_active_days_text": " · ".join(union_days) if union_days else "",
         }
 
 

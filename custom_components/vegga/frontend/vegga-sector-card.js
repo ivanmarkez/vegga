@@ -1,6 +1,6 @@
 /* VEGGA frontend loader. This stable file is served without cache. */
 (async () => {
-  const version = "0.4.31";
+  const version = "0.4.32";
   const moduleUrl = `/vegga_static/vegga-cards-v${version}.js`;
   try {
     await import(moduleUrl);
