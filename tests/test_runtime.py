@@ -1,4 +1,9 @@
-from custom_components.vegga.runtime import active_sector_numbers, sector_is_irrigating
+from custom_components.vegga.runtime import (
+    active_program_numbers,
+    active_program_sector_numbers,
+    active_sector_numbers,
+    sector_is_irrigating,
+)
 
 
 def test_active_sector_is_matched_exactly() -> None:
@@ -99,3 +104,30 @@ def test_a5500_configured_sector_xstatus_is_live_fallback() -> None:
     ]
 
     assert active_sector_numbers([], sectors) == {1, 2}
+
+
+def test_a5500_program_xstate_matches_official_frontend_rule() -> None:
+    programs = [
+        {"pk": {"id": "1"}, "xState": 0},
+        {"pk": {"id": "2"}, "xState": 1},
+        {"pk": {"id": "3"}, "xState": 9},
+        {"pk": {"id": "4"}, "xState": 7},
+    ]
+
+    assert active_program_numbers(programs) == {2, 3}
+
+
+def test_active_program_sector_is_detected_from_programsector_xstate() -> None:
+    programs = [
+        {
+            "pk": {"id": "5"},
+            "xState": 1,
+            "programSector": [
+                {"sector": 1, "xState": 0},
+                {"sector": 3, "xState": 1},
+                {"sector": 4, "xState": 0},
+            ],
+        }
+    ]
+
+    assert active_program_sector_numbers(programs) == {3}

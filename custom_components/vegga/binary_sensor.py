@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import DOMAIN
 from .entity import VeggaEntity, VeggaSectorEntity
 from .history import analyse_sector
+from .runtime import active_program_sector_numbers, is_active as runtime_is_active, sector_is_irrigating
 
 
 def _sector_number(item: dict[str, Any], fallback: int) -> int:
@@ -28,16 +29,7 @@ def _sector_name(item: dict[str, Any], fallback: int) -> str:
 
 
 def _is_active(item: dict[str, Any]) -> bool:
-    for key in ("active", "isActive", "running", "isRunning", "enabled", "irrigating"):
-        value = item.get(key)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return value != 0
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "on", "active", "running", "irrigating"}
-    status = item.get("status") or item.get("state")
-    return isinstance(status, str) and status.strip().lower() in {"active", "running", "on", "irrigating"}
+    return runtime_is_active(item)
 
 
 
@@ -117,31 +109,19 @@ class VeggaSectorBinarySensor(VeggaSectorEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
         runtime = data.get("irrigating_sectors", [])
-        for fallback, item in enumerate(runtime, start=1):
-            if not isinstance(item, dict):
-                continue
-            pk = item.get("pk")
-            values = (
-                item.get("_agronic_number"), item.get("sector"),
-                item.get("sectorNumber"), item.get("number"), item.get("id"),
-                pk.get("id") if isinstance(pk, dict) else None,
-            )
-            numbers = set()
-            for value in values:
-                try:
-                    numbers.add(int(value))
-                except (TypeError, ValueError):
-                    pass
-            program = item.get("xProgramN")
-            try:
-                program_active = int(program) > 0
-            except (TypeError, ValueError):
-                program_active = False
-            if (self._number in numbers or (not numbers and fallback == self._number)) and (program_active or _is_active(item) or bool(runtime)):
-                return True
-        live_numbers = _live_sector_numbers(data.get("unit_status"))
-        if self._number in live_numbers or (self._number - 1) in live_numbers:
+        sectors = data.get("sectors", [])
+        programs = data.get("programs", [])
+
+        if sector_is_irrigating(runtime, sectors, self._number):
             return True
+
+        if self._number in active_program_sector_numbers(programs):
+            return True
+
+        live_numbers = _live_sector_numbers(data.get("unit_status"))
+        if self._number in live_numbers:
+            return True
+
         sector = self._sector()
         return _is_active(sector) if sector else False
 

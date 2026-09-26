@@ -1,4 +1,4 @@
-const VEGGA_UI_VERSION = "0.5.21";
+const VEGGA_UI_VERSION = "0.5.23";
 const VEGGA_SECTOR_MODES = [
   { value: "Automático", short: "Auto", icon: "mdi:autorenew", cls: "auto" },
   { value: "Marcha manual", short: "Marcha", icon: "mdi:play", cls: "start" },

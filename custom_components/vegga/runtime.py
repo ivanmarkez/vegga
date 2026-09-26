@@ -60,6 +60,103 @@ def is_active(item: dict[str, Any]) -> bool:
         return False
 
 
+def program_is_irrigating(item: dict[str, Any]) -> bool:
+    """Return whether an A-5500 program is currently irrigating.
+
+    VEGGA's official A-5500 frontend (unit type 6) marks a program as
+    irrigating when xState is 1 or 9. The irrigation property shown by
+    the web UI is derived client-side from that value and is therefore not
+    always present in the API response.
+    """
+    if item.get("xState") is not None:
+        try:
+            return int(item["xState"]) in {1, 9}
+        except (TypeError, ValueError):
+            pass
+
+    for key in ("irrigation", "irrigating", "active", "running", "isRunning"):
+        value = item.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().casefold() in ACTIVE_TEXT
+    return False
+
+
+def program_number(item: dict[str, Any], fallback: int | None = None) -> int | None:
+    """Extract the one-based Agrónic program number."""
+    for key in ("programNumber", "program_number", "number", "program", "programId", "idProgram"):
+        try:
+            number = int(item.get(key))
+        except (TypeError, ValueError):
+            continue
+        if number >= 1:
+            return number
+    pk = item.get("pk")
+    if isinstance(pk, dict):
+        try:
+            number = int(pk.get("id"))
+        except (TypeError, ValueError):
+            number = 0
+        if number >= 1:
+            return number
+    return fallback
+
+
+def active_program_numbers(
+    programs: list[dict[str, Any]],
+    runtime_rows: list[dict[str, Any]] | None = None,
+) -> set[int]:
+    """Return programs that are actively irrigating on the A-5500."""
+    result: set[int] = set()
+    for position, program in enumerate(programs, start=1):
+        if not isinstance(program, dict) or not program_is_irrigating(program):
+            continue
+        number = program_number(program, position)
+        if number is not None:
+            result.add(number)
+
+    for row in runtime_rows or []:
+        if not isinstance(row, dict) or not is_active(row):
+            continue
+        try:
+            number = int(row.get("xProgramN"))
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            result.add(number)
+    return result
+
+
+def active_program_sector_numbers(programs: list[dict[str, Any]]) -> set[int]:
+    """Return sectors currently irrigating according to active program rows.
+
+    In A-5500 programSector entries, xState == 1 identifies the sector/group
+    that is actually in irrigation. This is a fallback when the
+    irrigation=true sectors endpoint is empty.
+    """
+    result: set[int] = set()
+    for program in programs:
+        if not isinstance(program, dict) or not program_is_irrigating(program):
+            continue
+        rows = program.get("programSector")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                sector = int(row.get("sector"))
+                state = int(row.get("xState"))
+            except (TypeError, ValueError):
+                continue
+            if sector > 0 and state == 1:
+                result.add(sector)
+    return result
+
+
 def sector_number(item: dict[str, Any], fallback: int | None = None) -> int | None:
     """Extract a one-based controller sector number without fuzzy ±1 matching."""
     pk = item.get("pk")

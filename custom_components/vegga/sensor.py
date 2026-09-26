@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .entity import VeggaEntity, VeggaSectorEntity
 from .history import analyse_sector, sector_volume_for_date
+from .runtime import active_program_numbers, active_program_sector_numbers, active_sector_numbers
 
 
 def _program_name(program: dict[str, Any], fallback: int) -> str:
@@ -487,28 +488,31 @@ class VeggaActiveProgramsSensor(VeggaEntity, SensorEntity):
 
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
-        runtime = data.get("irrigating_sectors", [])
-        numbers = [_runtime_program_number(item) for item in runtime if isinstance(item, dict)]
-        if not any(numbers):
-            refs = _find_active_refs(data.get("unit_status"), "program")
-            numbers = []
-            for item in refs:
-                try:
-                    numbers.append(int(item.get("reference")))
-                except (TypeError, ValueError):
-                    pass
-        names: list[str] = []
         programs = data.get("programs", [])
-        for number in numbers:
-            if 1 <= number <= len(programs):
-                names.append(_program_name(programs[number - 1], number))
-            elif number >= 0:
-                # Some controller fields are zero-based.
-                if 0 <= number < len(programs):
-                    names.append(_program_name(programs[number], number + 1))
-                else:
-                    names.append(f"Programa {number}")
-        return list(dict.fromkeys(names))
+        runtime = data.get("irrigating_sectors", [])
+
+        # A-5500: program.xState 1/9 and sector.xProgramN are the live sources.
+        numbers = set(active_program_numbers(programs, runtime))
+
+        if not numbers:
+            for item in _find_active_refs(data.get("unit_status"), "program"):
+                try:
+                    number = int(item.get("reference"))
+                except (TypeError, ValueError):
+                    continue
+                if number > 0:
+                    numbers.add(number)
+
+        program_by_number = {
+            _program_number(program, position): program
+            for position, program in enumerate(programs, start=1)
+            if isinstance(program, dict)
+        }
+        names: list[str] = []
+        for number in sorted(numbers):
+            program = program_by_number.get(number)
+            names.append(_program_name(program, number) if program else f"Programa {number}")
+        return names
 
     @property
     def native_value(self) -> int:
@@ -548,35 +552,34 @@ class VeggaActiveSectorsSensor(VeggaEntity, SensorEntity):
     def _active_names(self) -> list[str]:
         data = self.coordinator.data or {}
         runtime = data.get("irrigating_sectors", [])
-        numbers = [
-            _runtime_sector_number(item, index)
-            for index, item in enumerate(runtime, start=1)
-            if isinstance(item, dict) and (_runtime_program_number(item) > 0 or _is_active(item))
-        ]
-        # The endpoint is already filtered with irrigation=true. Some firmware
-        # versions omit an explicit active flag but still return only active rows.
-        if runtime and not numbers:
-            numbers = [
-                _runtime_sector_number(item, index)
-                for index, item in enumerate(runtime, start=1)
-                if isinstance(item, dict)
-            ]
-        if not numbers:
-            refs = _find_active_refs(data.get("unit_status"), "sector")
-            numbers = []
-            for item in refs:
-                try:
-                    numbers.append(int(item.get("reference")))
-                except (TypeError, ValueError):
-                    pass
         sectors = data.get("sectors", [])
+        programs = data.get("programs", [])
+
+        # Official A-5500 sector rule: xStatus 1, 2 and 4 mean irrigation.
+        numbers = set(active_sector_numbers(runtime, sectors))
+
+        # Independent fallback: active programSector rows use xState == 1.
+        numbers.update(active_program_sector_numbers(programs))
+
+        if not numbers:
+            for item in _find_active_refs(data.get("unit_status"), "sector"):
+                try:
+                    number = int(item.get("reference"))
+                except (TypeError, ValueError):
+                    continue
+                if number > 0:
+                    numbers.add(number)
+
+        sector_by_number = {
+            _sector_number(sector, position): sector
+            for position, sector in enumerate(sectors, start=1)
+            if isinstance(sector, dict)
+        }
         names: list[str] = []
-        for number in numbers:
-            if 1 <= number <= len(sectors):
-                names.append(_sector_name(sectors[number - 1], number))
-            elif 0 <= number < len(sectors):
-                names.append(_sector_name(sectors[number], number + 1))
-        return list(dict.fromkeys(names))
+        for number in sorted(numbers):
+            sector = sector_by_number.get(number)
+            names.append(_sector_name(sector, number) if sector is not None else f"Sector {number}")
+        return names
 
     @property
     def native_value(self) -> int:
