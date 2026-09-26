@@ -189,16 +189,40 @@ def _sector_aliases(sector: dict[str, Any], number: int, name: str) -> tuple[set
 def _program_sector_entries(program: dict[str, Any]) -> list[dict[str, Any]]:
     """Locate the sectors that are actually assigned to one program.
 
-    Important: fields such as ``sectorPerGroup`` describe program behaviour;
-    they are *not* sector references.  Earlier versions matched every key that
-    merely contained the word ``sector``, which made sector 1 appear in almost
-    every program because ``sectorPerGroup`` is commonly equal to 1.
-
-    We therefore accept only known sector containers (for example
-    ``programSector``) and explicit numbered keys such as ``sector1``.
+    On the A-5500, ``programSector`` is authoritative.  When it is present we
+    deliberately ignore every other field whose name happens to contain
+    ``sector``.  This prevents metadata/boolean fields from being mistaken for
+    a sector reference (the symptom was sector 1 inheriting almost all
+    programs).
     """
     entries: list[dict[str, Any]] = []
 
+    # Authoritative A-5500 shape confirmed from the VEGGA payload:
+    #   programSector: [{"sector": 6, ...}, {"sector": 0, ...}]
+    # Sector 0 is just an unused slot.  Keep it harmlessly in the parsed list;
+    # it can never match a real HA sector because real sector numbers start at 1.
+    if "programSector" in program:
+        rows = program.get("programSector")
+        if isinstance(rows, list):
+            for index, item in enumerate(rows, start=1):
+                if isinstance(item, dict):
+                    ref = item.get("sector")
+                    if ref not in (None, ""):
+                        entries.append({
+                            "reference": ref,
+                            "order": index,
+                            "path": f"program.programSector[{index - 1}]",
+                        })
+                elif isinstance(item, (int, float, str)):
+                    entries.append({
+                        "reference": item,
+                        "order": index,
+                        "path": f"program.programSector[{index - 1}]",
+                    })
+        return entries
+
+    # Fallback for other VEGGA controller payloads that do not expose
+    # programSector.
     collection_keys = {
         "programsector",
         "programsectors",
