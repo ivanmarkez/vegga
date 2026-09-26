@@ -1,7 +1,15 @@
-VEGGA Agrónic v0.5.20
+VEGGA 0.5.22
+
+- Asociación estricta A-5500: cuando existe programSector, solo se usa programSector[].sector.
+- Corrige definitivamente el sector 1, que podía heredar programas por campos auxiliares.
+
+VEGGA Agrónic v0.5.21
 
 Tarjetas Lovelace integradas para resumen de riego, control de sectores y control de programas.
 Recurso frontend estable: /vegga_static/vegga-overview-card.js
+
+Corrección v0.5.21:
+- Corrige la asociación del sector 1 con programas ajenos: sectorPerGroup ya no se interpreta como un número de sector.
 
 Novedad v0.5.20:
 - Muestra la programación de días por sector y por programa (L M X J V S D).
