@@ -180,12 +180,36 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 f"cambiaron monday..sunday. Detalle: {err}"
             ) from err
 
+        # Update Home Assistant's coordinator cache immediately after VEGGA
+        # confirms the POST. This prevents the frontend from momentarily
+        # reverting to the old weekday state while the next cloud poll arrives.
+        current_data = deepcopy(coordinator.data or {})
+        cached_programs = list(current_data.get("programs", []))
+        updated_programs: list[Any] = []
+
+        for fallback, item in enumerate(cached_programs, start=1):
+            if not isinstance(item, dict):
+                updated_programs.append(item)
+                continue
+
+            cached = deepcopy(item)
+            if _program_number(cached, fallback) == actual_program_number:
+                for day in WEEKDAY_KEYS:
+                    cached[day] = payload[day]
+            updated_programs.append(cached)
+
+        current_data["programs"] = updated_programs
+        coordinator.async_set_updated_data(current_data)
+
         active = [key for key in WEEKDAY_KEYS if payload[key]]
         coordinator.record_command(
             f"Programa {actual_program_number}: días "
             + (", ".join(active) if active else "ninguno")
         )
-        await coordinator.async_request_refresh()
+
+        # Do not force an immediate cloud refresh here. VEGGA may need a brief
+        # moment to expose the just-written data through GET; the normal
+        # coordinator polling will reconcile it shortly afterwards.
 
     hass.services.async_register(
         DOMAIN,

@@ -1,44 +1,20 @@
-# VEGGA 0.5.26 — editor de días de riego
+# VEGGA 0.5.27 — actualización inmediata de días
 
-Corrección del guardado de los días de programa.
+Corrige el efecto por el que, después de pulsar Guardar, la tarjeta volvía a mostrar temporalmente los días anteriores.
 
-## Endpoint confirmado en VEGGA
+## Qué cambia
 
-- Método: `POST`
-- Ruta: `/agronic/api/v1/units/{device_id}/programs/{program_number}`
-- Ejemplo confirmado: `/units/17669/programs/1`
-- Respuesta observada: `200 OK`
+- El `POST` de VEGGA sigue siendo el mismo y ya confirmado.
+- Tras recibir respuesta correcta, la integración actualiza inmediatamente el caché del coordinator de Home Assistant.
+- La tarjeta mantiene además el valor recién guardado de forma optimista hasta que el estado de HA coincide.
+- No se fuerza un GET inmediato a VEGGA, evitando leer una copia todavía no actualizada justo después del POST.
+- El sondeo normal de la integración confirma posteriormente el estado real.
 
-## Cómo guarda esta versión
+## Archivos a sustituir
 
-1. Lee el programa individual justo antes del cambio.
-2. Conserva el objeto completo devuelto por VEGGA.
-3. Añade/mantiene `progtype: "6"`.
-4. Cambia exclusivamente:
-   - monday
-   - tuesday
-   - wednesday
-   - thursday
-   - friday
-   - saturday
-   - sunday
-5. Envía el programa mediante POST al mismo endpoint que usa la web de VEGGA.
-
-Así no se reconstruyen horas, sectores, fertilización ni otros parámetros.
-
-## Archivos
-
-Sustituir:
 - `custom_components/vegga/__init__.py`
 - `custom_components/vegga/manifest.json`
 - `custom_components/vegga/services.py`
 - `custom_components/vegga/frontend/vegga-program-days-card.js`
 
-`services.yaml` puede quedarse como en 0.5.25, pero se incluye también en el paquete.
-
-## Después de subir a GitHub
-
-1. Actualiza/reinstala la integración desde HACS.
-2. Reinicia Home Assistant.
-3. Comprueba que la tarjeta muestra `v0.5.26`.
-4. Prueba primero cambiando un único día del Programa 1.
+Después de actualizar desde HACS, reinicia Home Assistant y comprueba que la tarjeta muestra `v0.5.27`.

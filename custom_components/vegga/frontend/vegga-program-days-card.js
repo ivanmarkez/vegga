@@ -1,4 +1,4 @@
-const VEGGA_PROGRAM_DAYS_VERSION = "0.5.26";
+const VEGGA_PROGRAM_DAYS_VERSION = "0.5.27";
 
 class VeggaProgramDaysCard extends HTMLElement {
   constructor() {
@@ -7,6 +7,7 @@ class VeggaProgramDaysCard extends HTMLElement {
     this._config = null;
     this._hass = null;
     this._drafts = new Map();
+    this._optimistic = new Map();
     this._busy = new Set();
     this._messages = new Map();
   }
@@ -103,7 +104,26 @@ class VeggaProgramDaysCard extends HTMLElement {
       });
     });
 
-    return Array.from(grouped.values()).sort((a, b) => a.number - b.number);
+    const programs = Array.from(grouped.values()).sort((a, b) => a.number - b.number);
+
+    programs.forEach((program) => {
+      const key = String(program.number);
+      const optimistic = this._optimistic.get(key);
+      if (!optimistic) return;
+
+      const sourceMatches = [
+        "monday", "tuesday", "wednesday", "thursday",
+        "friday", "saturday", "sunday",
+      ].every((day) => Boolean(program.weekdays[day]) === Boolean(optimistic[day]));
+
+      if (sourceMatches) {
+        this._optimistic.delete(key);
+      } else {
+        program.weekdays = { ...optimistic };
+      }
+    });
+
+    return programs;
   }
 
   _draft(program) {
@@ -163,6 +183,7 @@ class VeggaProgramDaysCard extends HTMLElement {
         days,
       });
 
+      this._optimistic.set(key, { ...draft });
       this._drafts.delete(key);
       this._messages.set(key, { type: "ok", text: "Días guardados" });
       this._busy.delete(key);
