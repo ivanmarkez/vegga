@@ -1,4 +1,4 @@
-const VEGGA_PROGRAM_DAYS_VERSION = "0.5.25";
+const VEGGA_PROGRAM_DAYS_VERSION = "0.5.26";
 
 class VeggaProgramDaysCard extends HTMLElement {
   constructor() {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import voluptuous as vol
@@ -35,6 +36,15 @@ def _as_bool(value: Any) -> bool:
 
 
 def _program_number(program: dict[str, Any], fallback: int) -> int:
+    pk = program.get("pk")
+    if isinstance(pk, dict):
+        try:
+            value = int(pk.get("id"))
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value
+
     for key in (
         "programNumber",
         "program_number",
@@ -42,6 +52,7 @@ def _program_number(program: dict[str, Any], fallback: int) -> int:
         "program",
         "idProgram",
         "programId",
+        "id",
     ):
         try:
             value = int(program.get(key))
@@ -50,6 +61,28 @@ def _program_number(program: dict[str, Any], fallback: int) -> int:
         if value > 0:
             return value
     return fallback
+
+
+def _unwrap_program(data: Any) -> dict[str, Any] | None:
+    """Extract one program object from possible VEGGA wrappers."""
+    if isinstance(data, dict):
+        # Direct program response.
+        if isinstance(data.get("pk"), dict) or "monday" in data or "name" in data:
+            return data
+
+        for key in ("content", "data", "program", "item", "result"):
+            value = data.get(key)
+            found = _unwrap_program(value)
+            if found is not None:
+                return found
+
+    if isinstance(data, list):
+        for item in data:
+            found = _unwrap_program(item)
+            if found is not None:
+                return found
+
+    return None
 
 
 async def async_register_services(hass: HomeAssistant) -> None:
@@ -77,8 +110,9 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 f"No se encontró el controlador VEGGA {controller}"
             )
 
+        # Validate against the already loaded program list first.
         programs = (coordinator.data or {}).get("programs", [])
-        program_data: dict[str, Any] | None = None
+        listed_program: dict[str, Any] | None = None
         actual_program_number: int | None = None
 
         for fallback, item in enumerate(programs, start=1):
@@ -86,57 +120,64 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 continue
             number = _program_number(item, fallback)
             if number == requested_program:
-                program_data = item
+                listed_program = item
                 actual_program_number = number
                 break
 
-        if program_data is None or actual_program_number is None:
+        if listed_program is None or actual_program_number is None:
             raise HomeAssistantError(
                 f"No se encontró el programa {requested_program}"
             )
 
         if (
-            _as_bool(program_data.get("daysFreq"))
-            or _as_bool(program_data.get("daysFrequency"))
+            _as_bool(listed_program.get("daysFreq"))
+            or _as_bool(listed_program.get("daysFrequency"))
         ):
             raise HomeAssistantError(
                 "Este programa usa frecuencia de días y no un calendario semanal"
             )
 
+        # VEGGA's editor reads the individual program and saves it back with:
+        # POST /units/{device_id}/programs/{program_number}
+        #
+        # Read immediately before writing so every setting (hours, sectors,
+        # fertilizer, etc.) is kept exactly as VEGGA currently has it.
         try:
-            program_type = int(
-                program_data.get(
-                    "type",
-                    program_data.get(
-                        "programType",
-                        program_data.get("startType", 0),
-                    ),
-                )
+            response = await coordinator.api._request(
+                "GET",
+                f"/units/{coordinator.api.device_id}/programs/{actual_program_number}",
             )
-        except (TypeError, ValueError):
-            program_type = 0
-
-        if program_type == 1:
+        except VeggaApiError as err:
             raise HomeAssistantError(
-                "Este programa es secuencial y no usa calendario semanal"
-            )
+                f"No se pudo leer el programa {actual_program_number} antes de guardarlo: {err}"
+            ) from err
 
-        payload = {key: key in requested_days for key in WEEKDAY_KEYS}
+        current_program = _unwrap_program(response)
+        if current_program is None:
+            # The list entry is still a safe fallback because it comes from
+            # VEGGA itself, but normally the individual GET should be used.
+            current_program = listed_program
+
+        payload = deepcopy(current_program)
+
+        # Captured from VEGGA's own program-save payload.
+        payload["progtype"] = "6"
+
+        # Change ONLY the weekly calendar fields.
+        for day in WEEKDAY_KEYS:
+            payload[day] = day in requested_days
 
         try:
-            # Escritura deliberadamente mínima:
-            # solo se envían monday..sunday. No se mandan horas, sectores,
-            # fertilización ni ningún otro parámetro del programa.
             await coordinator.api._request(
-                "PATCH",
+                "POST",
                 f"/units/{coordinator.api.device_id}/programs/{actual_program_number}",
                 json_data=payload,
             )
         except VeggaApiError as err:
             raise HomeAssistantError(
                 "VEGGA rechazó el cambio de días. "
-                "No se ha enviado ningún otro parámetro del programa. "
-                f"Detalle: {err}"
+                "El programa se leyó justo antes del guardado y únicamente se "
+                f"cambiaron monday..sunday. Detalle: {err}"
             ) from err
 
         active = [key for key in WEEKDAY_KEYS if payload[key]]
