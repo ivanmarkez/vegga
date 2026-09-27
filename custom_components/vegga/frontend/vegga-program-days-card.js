@@ -1,4 +1,4 @@
-const VEGGA_PROGRAM_DAYS_VERSION = "0.5.28";
+const VEGGA_PROGRAM_DAYS_VERSION = "0.5.29";
 
 class VeggaProgramDaysCard extends HTMLElement {
   constructor() {
@@ -42,12 +42,15 @@ class VeggaProgramDaysCard extends HTMLElement {
   }
 
   _escape(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+    return String(value == null ? "" : value).replace(/[&<>'"]/g, function (char) {
+      return {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#039;",
+        '"': "&quot;"
+      }[char];
+    });
   }
 
   _number(value) {
@@ -274,10 +277,10 @@ class VeggaProgramDaysCard extends HTMLElement {
       .program-number{font-size:.76rem;font-weight:800;color:var(--primary-color)}
       .program-name{font-size:1rem;font-weight:750;margin-top:2px}
       .changed,.saved{font-size:.72rem;font-weight:750;padding:4px 8px;border-radius:999px;white-space:nowrap}
-      .changed{background:color-mix(in srgb,var(--warning-color,#f9a825) 18%,var(--card-background-color));color:var(--warning-color,#f9a825)}
+      .changed{background:var(--secondary-background-color);color:var(--warning-color,#f9a825)}
       .saved{background:var(--secondary-background-color);color:var(--secondary-text-color)}
       .days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
-      .day{aspect-ratio:1/1;border-radius:50%;border:1px solid var(--divider-color);background:var(--secondary-background-color);color:var(--secondary-text-color);font:inherit;font-weight:800;cursor:pointer;min-width:34px}
+      .day{width:44px;height:44px;border-radius:50%;border:1px solid var(--divider-color);background:var(--secondary-background-color);color:var(--secondary-text-color);font:inherit;font-weight:800;cursor:pointer;min-width:34px}
       .day.active{background:var(--primary-color);border-color:var(--primary-color);color:var(--text-primary-color,#fff)}
       .day:disabled{opacity:.55;cursor:default}
       .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
@@ -291,11 +294,11 @@ class VeggaProgramDaysCard extends HTMLElement {
       .message.error{color:var(--error-color,#d32f2f)}
       .empty{padding:22px;text-align:center;color:var(--secondary-text-color);border:1px solid var(--divider-color);border-radius:14px}
       @media(max-width:700px){
-        .wrap{padding:12px}
+        .wrap{padding:10px}
         h2{font-size:1.15rem}
         .list{grid-template-columns:1fr}
         .program{padding:12px}
-        .day{min-width:0;width:100%;font-size:.9rem}
+        .day{min-width:0;width:100%;height:auto;min-height:38px;font-size:.9rem}
       }
     </style>
 
