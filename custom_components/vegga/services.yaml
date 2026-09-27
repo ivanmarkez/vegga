@@ -1,0 +1,43 @@
+set_program_days:
+  name: Cambiar días de riego
+  description: Cambia únicamente los días semanales de un programa VEGGA.
+  fields:
+    controller:
+      name: Controlador
+      description: ID o prefijo del controlador VEGGA/Agrónic.
+      required: true
+      example: "vivero_agronic_17669"
+      selector:
+        text:
+    program:
+      name: Programa
+      description: Número del programa.
+      required: true
+      example: 5
+      selector:
+        number:
+          min: 1
+          max: 99
+          mode: box
+    days:
+      name: Días
+      description: Días de la semana que quedarán activos.
+      required: true
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Lunes
+              value: monday
+            - label: Martes
+              value: tuesday
+            - label: Miércoles
+              value: wednesday
+            - label: Jueves
+              value: thursday
+            - label: Viernes
+              value: friday
+            - label: Sábado
+              value: saturday
+            - label: Domingo
+              value: sunday

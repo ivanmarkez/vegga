@@ -13,6 +13,7 @@ from homeassistant.helpers.typing import ConfigType
 from .api import VeggaApi
 from .const import CONF_DEVICE_ID, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .coordinator import VeggaCoordinator
+from .services import async_register_services
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -21,19 +22,21 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
 ]
 
-VERSION = "0.5.24"
+VERSION = "0.5.25"
 FRONTEND_BASE = "/vegga_static"
 FRONTEND_FILES = (
     "vegga-sector-card.js",
     "vegga-cards-v0.4.31.js",
     "vegga-cards-v0.4.32.js",
     "vegga-overview-card.js",
+    "vegga-program-days-card.js",
 )
 OVERVIEW_MODULE_URL = f"{FRONTEND_BASE}/vegga-overview-card.js?v={VERSION}"
+PROGRAM_DAYS_MODULE_URL = f"{FRONTEND_BASE}/vegga-program-days-card.js?v={VERSION}"
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register VEGGA frontend files before config entries are loaded."""
+    """Register VEGGA frontend files and services."""
     frontend_dir = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
         [
@@ -46,9 +49,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         ]
     )
 
-    # Home Assistant exposes this helper specifically so custom integrations
-    # can load frontend modules without requiring a manual Lovelace resource.
     add_extra_js_url(hass, OVERVIEW_MODULE_URL)
+    add_extra_js_url(hass, PROGRAM_DAYS_MODULE_URL)
+    await async_register_services(hass)
     return True
 
 
