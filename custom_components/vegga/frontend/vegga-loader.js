@@ -1,5 +1,7 @@
-// VEGGA frontend loader v0.5.29
-// Load both cards from one Home Assistant extra-module URL.
-// This avoids mobile clients keeping only one of multiple injected modules.
-import "/vegga_static/vegga-overview-card.js?v=0.5.29";
-import "/vegga_static/vegga-program-days-card.js?v=0.5.29";
+// Compatibility for previously registered VEGGA loader URLs.
+// Each module loads independently; errors cannot block the other card.
+for (const file of ["vegga-program-days-card.js", "vegga-overview-card.js"]) {
+  import(`/vegga_static/${file}?v=0.5.30`).catch((error) => {
+    console.error(`[VEGGA] Error loading ${file}`, error);
+  });
+}

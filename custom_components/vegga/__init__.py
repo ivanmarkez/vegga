@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
@@ -14,6 +10,7 @@ from .api import VeggaApi
 from .const import CONF_DEVICE_ID, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .coordinator import VeggaCoordinator
 from .services import async_register_services
+from .frontend_setup import async_setup_frontend
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -22,34 +19,9 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
 ]
 
-VERSION = "0.5.29"
-FRONTEND_BASE = "/vegga_static"
-FRONTEND_FILES = (
-    "vegga-sector-card.js",
-    "vegga-cards-v0.4.31.js",
-    "vegga-cards-v0.4.32.js",
-    "vegga-overview-card.js",
-    "vegga-program-days-card.js",
-    "vegga-loader.js",
-)
-FRONTEND_MODULE_URL = f"{FRONTEND_BASE}/vegga-loader.js?v={VERSION}"
-
-
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register VEGGA frontend files and services."""
-    frontend_dir = Path(__file__).parent / "frontend"
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                f"{FRONTEND_BASE}/{filename}",
-                str(frontend_dir / filename),
-                False,
-            )
-            for filename in FRONTEND_FILES
-        ]
-    )
-
-    add_extra_js_url(hass, FRONTEND_MODULE_URL)
+    await async_setup_frontend(hass)
     await async_register_services(hass)
     return True
 

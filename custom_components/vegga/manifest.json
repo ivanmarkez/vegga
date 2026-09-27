@@ -1,7 +1,7 @@
 {
   "domain": "vegga",
-  "name": "VEGGA Agrónic",
-  "version": "0.5.29",
+  "name": "VEGGA Agr\u00f3nic",
+  "version": "0.5.30",
   "documentation": "https://app.veggadigital.com/",
   "issue_tracker": "https://app.veggadigital.com/",
   "config_flow": true,
@@ -10,6 +10,7 @@
   "requirements": [],
   "dependencies": [
     "frontend",
-    "http"
+    "http",
+    "lovelace"
   ]
 }

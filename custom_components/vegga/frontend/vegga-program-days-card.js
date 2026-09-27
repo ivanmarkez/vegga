@@ -1,4 +1,4 @@
-const VEGGA_PROGRAM_DAYS_VERSION = "0.5.29";
+const VEGGA_PROGRAM_DAYS_VERSION = "0.5.30";
 
 class VeggaProgramDaysCard extends HTMLElement {
   constructor() {
@@ -264,23 +264,23 @@ class VeggaProgramDaysCard extends HTMLElement {
     }).join("");
 
     this.shadowRoot.innerHTML = `<style>
-      :host{display:block}
+      :host{display:block;min-width:0;max-width:100%} *{box-sizing:border-box}
       ha-card{overflow:hidden}
-      .wrap{padding:18px}
+      .wrap{padding:18px;container-type:inline-size}
       .titlebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
       h2{margin:0;font-size:1.35rem}
       .version{font-size:.72rem;color:var(--secondary-text-color)}
       .note{margin:0 0 14px;color:var(--secondary-text-color);font-size:.84rem}
-      .list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}
-      .program{border:1px solid var(--divider-color);border-radius:14px;padding:14px;background:var(--card-background-color)}
+      .list{display:grid;grid-template-columns:minmax(0,1fr);gap:11px}
+      .program{min-width:0;border:1px solid var(--divider-color);border-radius:14px;padding:14px;background:var(--card-background-color)}
       .program-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}
       .program-number{font-size:.76rem;font-weight:800;color:var(--primary-color)}
-      .program-name{font-size:1rem;font-weight:750;margin-top:2px}
+      .program-name{overflow-wrap:anywhere;font-size:1rem;font-weight:750;margin-top:2px}
       .changed,.saved{font-size:.72rem;font-weight:750;padding:4px 8px;border-radius:999px;white-space:nowrap}
       .changed{background:var(--secondary-background-color);color:var(--warning-color,#f9a825)}
       .saved{background:var(--secondary-background-color);color:var(--secondary-text-color)}
-      .days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
-      .day{width:44px;height:44px;border-radius:50%;border:1px solid var(--divider-color);background:var(--secondary-background-color);color:var(--secondary-text-color);font:inherit;font-weight:800;cursor:pointer;min-width:34px}
+      .days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+      .day{height:44px;border-radius:50%;border:1px solid var(--divider-color);background:var(--secondary-background-color);color:var(--secondary-text-color);font:inherit;font-weight:800;cursor:pointer;min-width:0;width:100%;padding:0}
       .day.active{background:var(--primary-color);border-color:var(--primary-color);color:var(--text-primary-color,#fff)}
       .day:disabled{opacity:.55;cursor:default}
       .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
@@ -293,6 +293,7 @@ class VeggaProgramDaysCard extends HTMLElement {
       .message.ok{color:var(--success-color,#2e7d32)}
       .message.error{color:var(--error-color,#d32f2f)}
       .empty{padding:22px;text-align:center;color:var(--secondary-text-color);border:1px solid var(--divider-color);border-radius:14px}
+      @container(min-width:700px){.list{grid-template-columns:repeat(2,minmax(0,1fr))}}
       @media(max-width:700px){
         .wrap{padding:10px}
         h2{font-size:1.15rem}
@@ -308,7 +309,7 @@ class VeggaProgramDaysCard extends HTMLElement {
           <h2>${this._escape(this._config.title)}</h2>
           <span class="version">v${VEGGA_PROGRAM_DAYS_VERSION}</span>
         </div>
-        <p class="note">Activa o desactiva los días y pulsa Guardar. Solo se envían los siete campos del calendario semanal.</p>
+        <p class="note">Activa o desactiva los días y pulsa Guardar. Los cambios se aplican al programa seleccionado.</p>
         ${rows ? `<div class="list">${rows}</div>` : `<div class="empty">No se han encontrado programas con calendario semanal.</div>`}
       </div>
     </ha-card>`;
