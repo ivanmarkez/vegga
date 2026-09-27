@@ -22,7 +22,7 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
 ]
 
-VERSION = "0.5.27"
+VERSION = "0.5.28"
 FRONTEND_BASE = "/vegga_static"
 FRONTEND_FILES = (
     "vegga-sector-card.js",
@@ -30,9 +30,9 @@ FRONTEND_FILES = (
     "vegga-cards-v0.4.32.js",
     "vegga-overview-card.js",
     "vegga-program-days-card.js",
+    "vegga-loader.js",
 )
-OVERVIEW_MODULE_URL = f"{FRONTEND_BASE}/vegga-overview-card.js?v={VERSION}"
-PROGRAM_DAYS_MODULE_URL = f"{FRONTEND_BASE}/vegga-program-days-card.js?v={VERSION}"
+FRONTEND_MODULE_URL = f"{FRONTEND_BASE}/vegga-loader.js?v={VERSION}"
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -49,8 +49,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         ]
     )
 
-    add_extra_js_url(hass, OVERVIEW_MODULE_URL)
-    add_extra_js_url(hass, PROGRAM_DAYS_MODULE_URL)
+    add_extra_js_url(hass, FRONTEND_MODULE_URL)
     await async_register_services(hass)
     return True
 
