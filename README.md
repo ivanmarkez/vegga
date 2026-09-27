@@ -1,4 +1,11 @@
-# VEGGA Agrónic para Home Assistant — v0.5.19
+# VEGGA Agrónic para Home Assistant — v0.5.24
+
+
+## Cambios 0.5.24
+
+- Fuerza la recarga del frontend del resumen de riego para evitar que Home Assistant conserve una versión anterior en caché.
+- La vista móvil muestra la programación de cada sector con su programa y los días **L M X J V S D**.
+- Mejora el ajuste horizontal de la programación en pantallas estrechas sin cambiar la tabla de escritorio.
 
 - Corrige las horas reales usando los cambios de estado registrados por Home Assistant.
 - El inicio es el primer cambio real a `on` del sector durante el día.
