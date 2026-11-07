@@ -72,23 +72,41 @@ async def async_setup_frontend(hass: HomeAssistant) -> None:
         for name in existing
     ])
     urls = [f"{BASE}/{name}?v={VERSION}" for name in CARDS if name in existing]
-    for url in urls:
-        # No shared import dependency: one failing card cannot block the other.
-        add_extra_js_url(hass, url)
     missing = set(CARDS) - set(existing)
     if missing:
         _LOGGER.error("VEGGA frontend files missing: %s", sorted(missing))
 
+    # Important: do NOT register both add_extra_js_url and Lovelace resources.
+    # When Home Assistant imports an extra module early, its customElements
+    # registration can race the frontend registry initialization. The second
+    # import of the same URL from Lovelace may then be deduplicated by the
+    # browser, leaving the card undefined (notably in Companion App WebView).
+    # Lovelace resources are the reliable loading path for storage-mode HA.
+    registered_in_lovelace = False
     try:
         lovelace = hass.data[LOVELACE_DATA]
         resources = (
             lovelace.get("resources") if isinstance(lovelace, dict)
             else lovelace.resources
         )
-        if resources is not None:
+        if resources is not None and hasattr(resources, "async_create_item"):
             await async_sync_resources(resources, urls)
+            registered_in_lovelace = True
     except Exception:
         # A dashboard problem must not prevent irrigation sensor startup.
-        _LOGGER.exception(
-            "Could not update VEGGA Lovelace resources; extra modules remain active"
+        _LOGGER.exception("Could not update VEGGA Lovelace resources")
+
+    if not registered_in_lovelace:
+        # Compatibility fallback for YAML resources or old HA configurations.
+        # This path is less reliable for custom-card registration; migrate to
+        # Lovelace module resources for a permanent fix.
+        _LOGGER.warning(
+            "VEGGA could not register Lovelace module resources. "
+            "Falling back to add_extra_js_url (less reliable in Companion App). "
+            "For YAML resource mode, add these URLs as type: module: %s",
+            urls,
         )
+        for url in urls:
+            add_extra_js_url(hass, url)
+    else:
+        _LOGGER.debug("VEGGA registered as Lovelace resources only: %s", urls)
