@@ -1,5 +1,12 @@
-# VEGGA Agrónic para Home Assistant — v0.5.24
+# VEGGA Agrónic para Home Assistant — v0.5.31
 
+
+## Cambios 0.5.31
+
+- Evita registrar las tarjetas dos veces (como recursos de Lovelace y como módulos JavaScript extra) cuando el panel admite recursos administrados. Esta doble ruta podía provocar carreras en el registro de tarjetas, especialmente en la aplicación Companion.
+- Mantiene el diseño de las tarjetas y no modifica la conexión, los sensores ni los comandos de riego.
+- Compatibilidad: si Home Assistant utiliza recursos Lovelace en modo YAML, se conserva la carga anterior y se avisa en el registro. Para una solución estable en ese modo, declarar explícitamente los dos archivos en `lovelace.resources`.
+- Versión de frontend y manifiesto sincronizada a 0.5.31 para invalidar la caché al actualizar.
 
 ## Cambios 0.5.24
 
