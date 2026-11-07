@@ -12,7 +12,7 @@ from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
-VERSION = "0.5.30"
+VERSION = "0.5.31"
 BASE = "/vegga_static"
 CARDS = ("vegga-program-days-card.js", "vegga-overview-card.js")
 LEGACY = (
