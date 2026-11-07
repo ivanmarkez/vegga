@@ -1,0 +1,72 @@
+# Vista de respaldo sin ninguna tarjeta custom ni archivo JS.
+# Pegar como dashboard COMPLETO en un dashboard nuevo de Home Assistant.
+# Descubre automaticamente las entidades existentes de la integracion VEGGA.
+views:
+  - title: VEGGA nativo
+    path: vegga-nativo
+    icon: mdi:sprinkler-variant
+    type: masonry
+    cards:
+      - type: markdown
+        title: Estado del Agrónic
+        content: |-
+          {% set ns = namespace(sectors=none, programs=none, cloud='Sin sensor', updated='Sin dato') %}
+          {% for eid in integration_entities('vegga') %}
+            {% set sectors = state_attr(eid, 'active_sector_names') %}
+            {% set programs = state_attr(eid, 'active_program_names') %}
+            {% set label = (state_attr(eid, 'friendly_name') or '') | lower %}
+            {% if sectors is not none %}
+              {% set ns.sectors = sectors %}
+            {% endif %}
+            {% if programs is not none %}
+              {% set ns.programs = programs %}
+            {% endif %}
+            {% if eid.startswith('binary_sensor.') and ('conexión vegga' in label or 'conexion vegga' in label) %}
+              {% set ns.cloud = states(eid) %}
+            {% endif %}
+            {% if eid.startswith('sensor.') and label.endswith('última actualización') %}
+              {% set ns.updated = states(eid) %}
+            {% endif %}
+          {% endfor %}
+          **Conexión VEGGA:** {{ 'Conectado' if ns.cloud == 'on' else 'Desconectado' if ns.cloud == 'off' else ns.cloud }}
+
+          **Sectores regando:** {{ ns.sectors | join(', ') if ns.sectors else 'Ninguno' if ns.sectors is not none else 'Sin datos' }}
+
+          **Programas activos:** {{ ns.programs | join(', ') if ns.programs else 'Ninguno' if ns.programs is not none else 'Sin datos' }}
+
+          **Última actualización:** {{ ns.updated }}
+
+      - type: markdown
+        title: Consumo por sector (datos de VEGGA)
+        content: |-
+          {% set ns = namespace(lines=[]) %}
+          {% for eid in integration_entities('vegga') %}
+            {% set device = state_attr(eid, 'vegga_device_id') %}
+            {% set level = state_attr(eid, 'analysis_level') %}
+            {% if eid.startswith('sensor.') and device | string == '17669' and level is not none %}
+              {% set name = state_attr(eid, 'sector_name') or eid %}
+              {% set last = states(eid) %}
+              {% set yesterday = state_attr(eid, 'yesterday_volume_m3') %}
+              {% set deviation = state_attr(eid, 'deviation_percent') %}
+              {% set yesterday_text = (yesterday | string) ~ ' m³' if yesterday is not none else '—' %}
+              {% set deviation_text = (deviation | string) ~ '%' if deviation is not none else '—' %}
+              {% set row = '**' ~ name ~ '** — Último riego: ' ~ last ~ ' m³ · Ayer: ' ~ yesterday_text ~ ' · Desv. habitual: ' ~ deviation_text %}
+              {% set ns.lines = ns.lines + [row] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.lines | join('\n\n') if ns.lines else 'Sin datos por sector. Comprueba las entidades VEGGA.' }}
+
+      - type: markdown
+        title: Programación por sector (solo lectura)
+        content: |-
+          {% set ns = namespace(lines=[]) %}
+          {% for eid in integration_entities('vegga') %}
+            {% set device = state_attr(eid, 'vegga_device_id') %}
+            {% set schedule = state_attr(eid, 'schedule_summary') %}
+            {% if eid.startswith('sensor.') and device | string == '17669' and schedule is not none %}
+              {% set name = state_attr(eid, 'sector_name') or eid %}
+              {% set row = '**' ~ name ~ '** — ' ~ (schedule if schedule else 'Sin programa relacionado') %}
+              {% set ns.lines = ns.lines + [row] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.lines | join('\n\n') if ns.lines else 'No hay programación disponible en las entidades VEGGA.' }}
